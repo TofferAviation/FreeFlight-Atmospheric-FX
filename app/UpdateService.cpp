@@ -93,8 +93,25 @@ std::wstring quote(const std::wstring& value) { return L"\"" + value + L"\""; }
 UpdateService::~UpdateService() { if (worker_.joinable()) worker_.join(); }
 
 void UpdateService::start(const std::string& channel) {
+    if (wcsstr(GetCommandLineW(), L"--test-update-popup")) {
+        showTestPreview();
+        return;
+    }
     if (worker_.joinable()) return;
     worker_ = std::thread([this, channel] { check(channel); });
+}
+
+void UpdateService::showTestPreview() {
+    UpdateInfo preview;
+    preview.checked = true;
+    preview.available = true;
+    preview.previewOnly = true;
+    preview.version = "0.4.1-test";
+    preview.channel = "stable";
+    preview.sizeBytes = 134217728;
+    preview.notes = {"Aircraft-specific contrail profiles", "Improved wake-vortex lifecycle", "Safer window resizing", "Verified GitHub update workflow"};
+    std::lock_guard<std::mutex> lock(mutex_);
+    info_ = std::move(preview);
 }
 
 UpdateInfo UpdateService::snapshot() const { std::lock_guard<std::mutex> lock(mutex_); return info_; }
@@ -114,6 +131,7 @@ void UpdateService::check(std::string channel) {
 
 bool UpdateService::launchUpdater(const std::wstring& appDirectory, std::string* error) const {
     const UpdateInfo update = snapshot(); if (!update.available) { if (error) *error = "No update is ready"; return false; }
+    if (update.previewOnly) { if (error) *error = "Test preview cannot install files"; return false; }
     const std::wstring helper = appDirectory + L"\\FFAtmoUpdater.exe";
     const std::wstring arguments = quote(widen(update.downloadUrl)) + L" " + quote(widen(update.sha256)) + L" " + quote(appDirectory) + L" " + std::to_wstring(GetCurrentProcessId());
     HINSTANCE result = ShellExecuteW(nullptr, L"open", helper.c_str(), arguments.c_str(), appDirectory.c_str(), SW_SHOWNORMAL);

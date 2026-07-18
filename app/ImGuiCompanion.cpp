@@ -284,8 +284,8 @@ void updateModal() {
         ImGui::Spacing();ImGui::Text("What's new");ImGui::BeginChild("notes",ImVec2(0,145),true);for(const std::string& note:update.notes)ImGui::TextColored(C(218,234,247),"✓  %s",note.c_str());ImGui::EndChild();
         ImGui::TextColored(C(78,188,255),"◇  Verified FreeFlight update");ImGui::Separator();ImGui::Checkbox("Install future updates automatically",&gAutomaticUpdates);ImGui::Spacing();
         if(ImGui::Button("REMIND ME LATER",ImVec2(250,50))){gUpdateService.dismissCurrent();ImGui::CloseCurrentPopup();}ImGui::SameLine();
-        ImGui::PushStyleColor(ImGuiCol_Button,C(17,91,218));if(ImGui::Button("UPDATE NOW",ImVec2(330,50))){std::string error;if(gUpdateService.launchUpdater(executablePath().parent_path().wstring(),&error))PostMessageW(gWindow,WM_CLOSE,0,0);else gFooter=error;}ImGui::PopStyleColor();
-        ImGui::TextDisabled("X-Plane should be closed while plugin files are replaced.");ImGui::EndPopup();
+        ImGui::PushStyleColor(ImGuiCol_Button,C(17,91,218));if(ImGui::Button(update.previewOnly?"CLOSE PREVIEW":"UPDATE NOW",ImVec2(330,50))){if(update.previewOnly){gUpdateService.dismissCurrent();ImGui::CloseCurrentPopup();}else{std::string error;if(gUpdateService.launchUpdater(executablePath().parent_path().wstring(),&error))PostMessageW(gWindow,WM_CLOSE,0,0);else gFooter=error;}}ImGui::PopStyleColor();
+        ImGui::TextDisabled(update.previewOnly?"TEST PREVIEW - no files will be downloaded or installed.":"X-Plane should be closed while plugin files are replaced.");ImGui::EndPopup();
     }
     if(!open)gUpdateService.dismissCurrent();
 }

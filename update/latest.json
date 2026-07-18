@@ -1,11 +1,12 @@
 {
-  "version": "0.4.0",
+  "version": "0.4.2",
   "channel": "stable",
-  "download_url": "https://github.com/TofferAviation/FreeFlight-Atmospheric-FX/releases/latest",
-  "size_bytes": 0,
-  "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "download_url": "https://github.com/TofferAviation/FreeFlight-Atmospheric-FX/releases/download/v0.4.2/FFAtmo-v0.4.2-win64.zip",
+  "size_bytes": 16689452,
+  "sha256": "39a8d932a75291ac800035617a905ceeecbc25ca6333484dd7e33bb75f1c68a1",
   "notes": [
-    "Development baseline established",
-    "GitHub update infrastructure prepared"
+    "New FreeFlight Atmospheric FX release",
+    "Performance and stability improvements",
+    "Verified automatic update package"
   ]
 }

@@ -1,0 +1,39 @@
+FFATMOSPHERICS v0.4 - FIRST COMPANION TEST
+=========================================
+
+1. Build v0.4 using BUILD_WINDOWS.txt.
+
+2. Close X-Plane and install the complete package\FFAtmo folder into:
+     F:\XPlane12\Resources\plugins\
+
+3. Start X-Plane and load the X-Crafts Lineage 1000.
+
+4. Launch:
+     F:\XPlane12\Resources\plugins\FFAtmo\FFAtmoCompanion.exe
+
+5. The bottom status should change to:
+     Connected to FFAtmospherics in X-Plane.
+
+6. Live Overview should show:
+   - connected plugin and particle-object status;
+   - X-Crafts Lineage 1000 profile;
+   - formation probability and estimated trail life/length;
+   - primary wake, secondary curtain and contrail-cirrus values.
+
+7. Open Effects Control. Enable Preview Mode. The master Effects checkbox must
+   enable automatically and X-Plane should respond within 0.25 seconds.
+
+8. Confirm Log.txt contains:
+     [FFAtmo] Applied live settings from FFAtmo Companion.
+
+9. Move the four effect sliders and confirm FFAtmo.ini changes in:
+     F:\XPlane12\Output\preferences\
+
+10. Close the companion. Effects must continue running with the last saved
+    settings. Reopen the companion and confirm it restores the same controls.
+
+11. Test the folder picker by moving the companion outside the plugin folder.
+    Select F:\XPlane12 and confirm the connection returns.
+
+12. XUIPC is not required for this test. v0.4 only includes the optional
+    provider interface; a concrete XUIPC adapter follows after SDK/API review.

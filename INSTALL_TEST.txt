@@ -1,0 +1,75 @@
+FFATMOSPHERICS v0.4 - INSTALL AND FIRST WAKE TEST
+============================================
+
+1. Finish the Windows build in BUILD_WINDOWS.txt.
+
+2. Copy the entire folder:
+     package\FFAtmo
+   into:
+     X-Plane 12\Resources\plugins\
+
+3. Confirm this exact installed structure:
+     Resources\plugins\FFAtmo\64\win.xpl
+     Resources\plugins\FFAtmo\assets\FFAtmo_Lineage.obj
+     Resources\plugins\FFAtmo\assets\FFAtmo_particles.pss
+     Resources\plugins\FFAtmo\assets\FFAtmo_particles.png
+     Resources\plugins\FFAtmo\profiles\Lineage1000.ini
+
+4. Start X-Plane 12 and load the X-Crafts Lineage 1000.
+
+5. Open Log.txt and confirm:
+     [FFAtmo] Started.
+     [FFAtmo] Loaded aircraft profile: X-Crafts Lineage 1000
+
+6. Before chasing real weather, use:
+     Plugins > FFAtmospherics > Preview Mode
+   This forces both contrails, over-wing condensation and every v0.4 wake stage
+   live. The preview does not alter X-Plane weather.
+
+7. Fly straight and level at cruise speed for at least three minutes. From an
+   external rear-quarter or tower view, look for this sequence:
+
+   - first seconds: thin, bright twin engine trails;
+   - young wake: two plumes roll into opposite corkscrews and
+     begin descending below the original flight level;
+   - middle wake: a fainter ice curtain remains between the descending wake and
+     the original trail altitude;
+   - older wake: the paired structure becomes broader and irregular, then
+     spreads into wispy contrail cirrus.
+
+8. Inspect emitter alignment. Record whether each
+   engine stream begins forward/aft/high/low of the nozzle and whether the two
+   wingtip streams begin at the actual tips. Also record whether the primary
+   wake visibly rotates in opposite directions and descends without dropping
+   unrealistically fast.
+
+9. Disable Preview Mode. For a natural persistence test, use cold cruise air
+   near FL350 with a dew point close to ambient temperature. Suitable conditions
+   should produce roughly 180-300 seconds (about 45-75 km at cruise speed).
+
+10. Settings are saved automatically to:
+     X-Plane 12\Output\preferences\FFAtmo.ini
+
+Useful commands/datarefs
+------------------------
+ffatmo/toggle_enabled
+ffatmo/toggle_preview
+ffatmo/reload_profile
+ffatmo/save_settings
+
+ffatmo/engine/left_ratio
+ffatmo/engine/right_ratio
+ffatmo/contrail/core_ratio
+ffatmo/contrail/spread_ratio
+ffatmo/contrail/persistence_seconds
+ffatmo/wing/condensation_ratio
+ffatmo/wing/vortex_ratio
+ffatmo/system/particle_budget_ratio
+ffatmo/wake/capture_ratio
+ffatmo/wake/primary_ratio
+ffatmo/wake/secondary_curtain_ratio
+ffatmo/wake/contrail_cirrus_ratio
+ffatmo/wake/vortex_lifetime_seconds
+ffatmo/wake/vortex_phase
+
+Do not edit or replace any file in the X-Crafts Lineage aircraft folder.

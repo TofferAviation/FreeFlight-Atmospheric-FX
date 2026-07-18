@@ -1,0 +1,43 @@
+FFATMOSPHERICS v0.3 - WAKE LIFECYCLE
+====================================
+
+Stage 1 - Jet/core phase
+------------------------
+Particle: ffatmo_contrail_core
+Typical visible age: 0-12 seconds
+Behavior: dense, narrow engine plumes with fast formation and fade.
+
+Stage 2 - Primary vortex wake
+--------------------------------
+Particle: ffatmo_primary_wake
+Typical visible age: about 7-130 seconds
+Behavior: delayed fade-in, opposite left/right corkscrew emission, gradual
+descent, expansion and vortex instability. Lifetime shortens in drier air.
+
+Stage 3 - Secondary ice curtain
+--------------------------------
+Particle: ffatmo_secondary_curtain
+Typical visible age: about 12-300 seconds in persistent conditions
+Behavior: ice detrained above the descending primary wake remains near the
+original flight level, broadens and becomes increasingly turbulent.
+
+Stage 4 - Contrail-cirrus transition
+------------------------------------
+Particle: ffatmo_contrail_cirrus
+Typical visible age: delayed until roughly 25-55 seconds, then up to the
+quality/persistence cap
+Behavior: broad, low-opacity, irregular ice-cloud population. It is suppressed
+when relative humidity over ice is insufficient for persistence.
+
+Important first-test observations
+---------------------------------
+- Engine and wing emitter alignment.
+- Whether the paired primary wakes visibly rotate in opposite directions.
+- Whether descent is subtle and believable rather than a rapid fall.
+- Whether the secondary curtain is visible but less dense than the primary wake.
+- Whether the cirrus layer begins late enough and breaks up naturally.
+- Frame rate after flying straight for at least three minutes on High quality.
+
+This is a native-particle approximation of the visible lifecycle. X-Plane does
+not expose interacting ice particles or a fluid solver, so it is not CFD and it
+does not create a weather-system cloud.

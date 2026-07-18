@@ -1,0 +1,11 @@
+#pragma once
+
+#define IDR_UI_OVERVIEW 101
+#define IDR_UI_EFFECTS 102
+#define IDR_UI_WEATHER 103
+#define IDR_UI_PERFORMANCE 104
+#define IDR_UI_PROFILE 105
+#define IDR_UI_ADVANCED 106
+#define IDR_BRAND_LOGO 107
+
+#define IDI_APP_ICON 201

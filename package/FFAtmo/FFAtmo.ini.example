@@ -1,0 +1,13 @@
+# Copying this file is optional; the plugin creates FFAtmo.ini under
+# X-Plane 12/Output/preferences automatically.
+enabled=1
+automatic_weather=1
+preview_mode=0
+quality=2
+contrail_intensity=1.0
+wing_condensation_intensity=1.0
+wing_vortex_intensity=1.0
+persistence_scale=1.0
+minimum_contrail_altitude_ft=18000
+adaptive_target_fps=30
+adaptive_quality=1

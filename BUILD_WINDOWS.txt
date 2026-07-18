@@ -1,0 +1,39 @@
+FFATMOSPHERICS v0.4 - WINDOWS PRODUCT BUILD
+==========================================
+
+Prerequisites
+-------------
+1. Visual Studio 2026 with Desktop development with C++.
+2. CMake in the x64 Native Tools Command Prompt.
+3. X-Plane SDK at:
+   F:\FreeFlight LLC liveries\Terminal\SDK
+
+Build plugin, companion and tests
+---------------------------------
+cd /d "PATH\TO\FFAtmo_v0.4_Standalone_Source"
+
+cmake -S . -B build-v04 -G "NMake Makefiles" ^
+  -DXPLANE_SDK="F:/FreeFlight LLC liveries/Terminal/SDK" ^
+  -DFFATMO_BUILD_PLUGIN=ON ^
+  -DFFATMO_BUILD_COMPANION=ON ^
+  -DFFATMO_BUILD_TESTS=ON ^
+  -DFFATMO_BUILD_IMGUI_PANEL=OFF
+
+cmake --build build-v04
+ctest --test-dir build-v04 --output-on-failure
+
+Expected product outputs
+------------------------
+package\FFAtmo\64\win.xpl
+package\FFAtmo\FFAtmoCompanion.exe
+
+Install
+-------
+Close X-Plane and replace the complete installed FFAtmo folder with:
+  package\FFAtmo
+
+Launch the companion from:
+  X-Plane 12\Resources\plugins\FFAtmo\FFAtmoCompanion.exe
+
+The app should detect the X-Plane root automatically. If it does not, use
+"Choose X-Plane folder" and select the folder containing X-Plane.exe.

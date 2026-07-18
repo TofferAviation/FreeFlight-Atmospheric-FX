@@ -1,0 +1,30 @@
+FFATMOSPHERICS v0.4 VALIDATION RECORD
+====================================
+
+Validated on: 2026-07-18
+
+PASS - C++17 core compiled with -Wall -Wextra -Wpedantic.
+PASS - All platform-independent physics, settings and profile tests passed.
+PASS - Companion status save/load and connection-state round trip passed.
+PASS - FileBridgeTelemetry compiled against the shared core interface.
+PASS - XPLM plugin compiled and linked as a 64-bit shared plugin using the
+       official X-Plane SDK 4.3.0 headers.
+PASS - Required XPlugin entry points were exported.
+PASS - Panel.cpp compiled against the available Dear ImGui header.
+PASS - Asset validator found 6 particle types, 4 emitter types and 8 Lineage
+       attachments and rejected unsupported hash-comment syntax.
+PASS - PSS contains no hash comments and matches the runtime package copy.
+
+Windows verification required
+-----------------------------
+- Compile and launch FFAtmoCompanion.exe with MSVC/Win32 common controls.
+- Confirm live FFAtmo.ini application within 250 ms.
+- Confirm FFAtmo.status.ini dashboard refresh at 500 ms.
+- Confirm DPI scaling, folder picker, dark controls and navigation on Windows.
+- Confirm companion closure does not interrupt the in-sim plugin.
+- Perform the visual vortex-roll-up calibration pass.
+
+XUIPC boundary
+--------------
+The optional provider interface is present. No XUIPC SDK or runtime is bundled,
+and no XUIPC-specific code is claimed as validated in v0.4.

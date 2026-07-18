@@ -1,0 +1,605 @@
+{
+  "asset_count": 100,
+  "assets": [
+    {
+      "file": "aircraft/lineage1000_top.png",
+      "width": 101,
+      "height": 107,
+      "mode": "RGBA"
+    },
+    {
+      "file": "backgrounds/background_atmospheric_clean.png",
+      "width": 1672,
+      "height": 941,
+      "mode": "RGB"
+    },
+    {
+      "file": "branding/avatar_default.png",
+      "width": 128,
+      "height": 128,
+      "mode": "RGBA"
+    },
+    {
+      "file": "branding/freeflight_atmospheric_fx_logo.png",
+      "width": 210,
+      "height": 68,
+      "mode": "RGBA"
+    },
+    {
+      "file": "branding/freeflight_emblem.png",
+      "width": 81,
+      "height": 49,
+      "mode": "RGBA"
+    },
+    {
+      "file": "controls/checkbox_checked.png",
+      "width": 28,
+      "height": 28,
+      "mode": "RGBA"
+    },
+    {
+      "file": "controls/divider_horizontal.png",
+      "width": 512,
+      "height": 1,
+      "mode": "RGBA"
+    },
+    {
+      "file": "controls/divider_vertical.png",
+      "width": 1,
+      "height": 256,
+      "mode": "RGBA"
+    },
+    {
+      "file": "controls/icon_circle_outline_blue.png",
+      "width": 72,
+      "height": 72,
+      "mode": "RGBA"
+    },
+    {
+      "file": "controls/live_pill_background.png",
+      "width": 112,
+      "height": 34,
+      "mode": "RGBA"
+    },
+    {
+      "file": "controls/progress_fill_blue.png",
+      "width": 140,
+      "height": 8,
+      "mode": "RGBA"
+    },
+    {
+      "file": "controls/progress_fill_gold.png",
+      "width": 140,
+      "height": 8,
+      "mode": "RGBA"
+    },
+    {
+      "file": "controls/progress_track.png",
+      "width": 140,
+      "height": 8,
+      "mode": "RGBA"
+    },
+    {
+      "file": "controls/slider_fill_blue.png",
+      "width": 256,
+      "height": 6,
+      "mode": "RGBA"
+    },
+    {
+      "file": "controls/slider_fill_gold.png",
+      "width": 256,
+      "height": 6,
+      "mode": "RGBA"
+    },
+    {
+      "file": "controls/slider_knob.png",
+      "width": 20,
+      "height": 20,
+      "mode": "RGBA"
+    },
+    {
+      "file": "controls/slider_track.png",
+      "width": 256,
+      "height": 6,
+      "mode": "RGBA"
+    },
+    {
+      "file": "controls/status_dot_blue.png",
+      "width": 18,
+      "height": 18,
+      "mode": "RGBA"
+    },
+    {
+      "file": "controls/status_dot_gold.png",
+      "width": 18,
+      "height": 18,
+      "mode": "RGBA"
+    },
+    {
+      "file": "controls/status_dot_green.png",
+      "width": 18,
+      "height": 18,
+      "mode": "RGBA"
+    },
+    {
+      "file": "controls/toggle_off.png",
+      "width": 54,
+      "height": 28,
+      "mode": "RGBA"
+    },
+    {
+      "file": "controls/toggle_on.png",
+      "width": 54,
+      "height": 28,
+      "mode": "RGBA"
+    },
+    {
+      "file": "gauges/gauge_blue_58.png",
+      "width": 128,
+      "height": 128,
+      "mode": "RGBA"
+    },
+    {
+      "file": "gauges/gauge_blue_64.png",
+      "width": 128,
+      "height": 128,
+      "mode": "RGBA"
+    },
+    {
+      "file": "gauges/gauge_gold_72.png",
+      "width": 128,
+      "height": 128,
+      "mode": "RGBA"
+    },
+    {
+      "file": "icons/active_blue/adaptive_lighting.png",
+      "width": 64,
+      "height": 64,
+      "mode": "RGBA"
+    },
+    {
+      "file": "icons/active_blue/adaptive_quality.png",
+      "width": 64,
+      "height": 64,
+      "mode": "RGBA"
+    },
+    {
+      "file": "icons/active_blue/atmosphere.png",
+      "width": 64,
+      "height": 64,
+      "mode": "RGBA"
+    },
+    {
+      "file": "icons/active_blue/bell.png",
+      "width": 64,
+      "height": 64,
+      "mode": "RGBA"
+    },
+    {
+      "file": "icons/active_blue/checkmark.png",
+      "width": 64,
+      "height": 64,
+      "mode": "RGBA"
+    },
+    {
+      "file": "icons/active_blue/chevron_down.png",
+      "width": 64,
+      "height": 64,
+      "mode": "RGBA"
+    },
+    {
+      "file": "icons/active_blue/clock.png",
+      "width": 64,
+      "height": 64,
+      "mode": "RGBA"
+    },
+    {
+      "file": "icons/active_blue/cloud.png",
+      "width": 64,
+      "height": 64,
+      "mode": "RGBA"
+    },
+    {
+      "file": "icons/active_blue/dynamic_weather.png",
+      "width": 64,
+      "height": 64,
+      "mode": "RGBA"
+    },
+    {
+      "file": "icons/active_blue/engine_contrails.png",
+      "width": 64,
+      "height": 64,
+      "mode": "RGBA"
+    },
+    {
+      "file": "icons/active_blue/eye.png",
+      "width": 64,
+      "height": 64,
+      "mode": "RGBA"
+    },
+    {
+      "file": "icons/active_blue/humidity.png",
+      "width": 64,
+      "height": 64,
+      "mode": "RGBA"
+    },
+    {
+      "file": "icons/active_blue/lighting.png",
+      "width": 64,
+      "height": 64,
+      "mode": "RGBA"
+    },
+    {
+      "file": "icons/active_blue/live_overview.png",
+      "width": 64,
+      "height": 64,
+      "mode": "RGBA"
+    },
+    {
+      "file": "icons/active_blue/network.png",
+      "width": 64,
+      "height": 64,
+      "mode": "RGBA"
+    },
+    {
+      "file": "icons/active_blue/overwing_sheet.png",
+      "width": 64,
+      "height": 64,
+      "mode": "RGBA"
+    },
+    {
+      "file": "icons/active_blue/presets.png",
+      "width": 64,
+      "height": 64,
+      "mode": "RGBA"
+    },
+    {
+      "file": "icons/active_blue/pressure.png",
+      "width": 64,
+      "height": 64,
+      "mode": "RGBA"
+    },
+    {
+      "file": "icons/active_blue/settings.png",
+      "width": 64,
+      "height": 64,
+      "mode": "RGBA"
+    },
+    {
+      "file": "icons/active_blue/sliders.png",
+      "width": 64,
+      "height": 64,
+      "mode": "RGBA"
+    },
+    {
+      "file": "icons/active_blue/thermometer.png",
+      "width": 64,
+      "height": 64,
+      "mode": "RGBA"
+    },
+    {
+      "file": "icons/active_blue/user.png",
+      "width": 64,
+      "height": 64,
+      "mode": "RGBA"
+    },
+    {
+      "file": "icons/active_blue/volumetric_clouds.png",
+      "width": 64,
+      "height": 64,
+      "mode": "RGBA"
+    },
+    {
+      "file": "icons/active_blue/weather.png",
+      "width": 64,
+      "height": 64,
+      "mode": "RGBA"
+    },
+    {
+      "file": "icons/active_blue/wind.png",
+      "width": 64,
+      "height": 64,
+      "mode": "RGBA"
+    },
+    {
+      "file": "icons/active_blue/wingtip_vortices.png",
+      "width": 64,
+      "height": 64,
+      "mode": "RGBA"
+    },
+    {
+      "file": "icons/color/check_circle_green.png",
+      "width": 64,
+      "height": 64,
+      "mode": "RGBA"
+    },
+    {
+      "file": "icons/color/clock_muted.png",
+      "width": 64,
+      "height": 64,
+      "mode": "RGBA"
+    },
+    {
+      "file": "icons/color/network_green.png",
+      "width": 64,
+      "height": 64,
+      "mode": "RGBA"
+    },
+    {
+      "file": "icons/color/weather_clear.png",
+      "width": 64,
+      "height": 64,
+      "mode": "RGBA"
+    },
+    {
+      "file": "icons/color/weather_cloudy.png",
+      "width": 64,
+      "height": 64,
+      "mode": "RGBA"
+    },
+    {
+      "file": "icons/color/weather_night_cloudy.png",
+      "width": 64,
+      "height": 64,
+      "mode": "RGBA"
+    },
+    {
+      "file": "icons/color/weather_partly_cloudy.png",
+      "width": 64,
+      "height": 64,
+      "mode": "RGBA"
+    },
+    {
+      "file": "icons/color/weather_storm.png",
+      "width": 64,
+      "height": 64,
+      "mode": "RGBA"
+    },
+    {
+      "file": "icons/white/adaptive_lighting.png",
+      "width": 64,
+      "height": 64,
+      "mode": "RGBA"
+    },
+    {
+      "file": "icons/white/adaptive_quality.png",
+      "width": 64,
+      "height": 64,
+      "mode": "RGBA"
+    },
+    {
+      "file": "icons/white/atmosphere.png",
+      "width": 64,
+      "height": 64,
+      "mode": "RGBA"
+    },
+    {
+      "file": "icons/white/bell.png",
+      "width": 64,
+      "height": 64,
+      "mode": "RGBA"
+    },
+    {
+      "file": "icons/white/checkmark.png",
+      "width": 64,
+      "height": 64,
+      "mode": "RGBA"
+    },
+    {
+      "file": "icons/white/chevron_down.png",
+      "width": 64,
+      "height": 64,
+      "mode": "RGBA"
+    },
+    {
+      "file": "icons/white/clock.png",
+      "width": 64,
+      "height": 64,
+      "mode": "RGBA"
+    },
+    {
+      "file": "icons/white/cloud.png",
+      "width": 64,
+      "height": 64,
+      "mode": "RGBA"
+    },
+    {
+      "file": "icons/white/dynamic_weather.png",
+      "width": 64,
+      "height": 64,
+      "mode": "RGBA"
+    },
+    {
+      "file": "icons/white/engine_contrails.png",
+      "width": 64,
+      "height": 64,
+      "mode": "RGBA"
+    },
+    {
+      "file": "icons/white/eye.png",
+      "width": 64,
+      "height": 64,
+      "mode": "RGBA"
+    },
+    {
+      "file": "icons/white/humidity.png",
+      "width": 64,
+      "height": 64,
+      "mode": "RGBA"
+    },
+    {
+      "file": "icons/white/lighting.png",
+      "width": 64,
+      "height": 64,
+      "mode": "RGBA"
+    },
+    {
+      "file": "icons/white/live_overview.png",
+      "width": 64,
+      "height": 64,
+      "mode": "RGBA"
+    },
+    {
+      "file": "icons/white/network.png",
+      "width": 64,
+      "height": 64,
+      "mode": "RGBA"
+    },
+    {
+      "file": "icons/white/overwing_sheet.png",
+      "width": 64,
+      "height": 64,
+      "mode": "RGBA"
+    },
+    {
+      "file": "icons/white/presets.png",
+      "width": 64,
+      "height": 64,
+      "mode": "RGBA"
+    },
+    {
+      "file": "icons/white/pressure.png",
+      "width": 64,
+      "height": 64,
+      "mode": "RGBA"
+    },
+    {
+      "file": "icons/white/settings.png",
+      "width": 64,
+      "height": 64,
+      "mode": "RGBA"
+    },
+    {
+      "file": "icons/white/sliders.png",
+      "width": 64,
+      "height": 64,
+      "mode": "RGBA"
+    },
+    {
+      "file": "icons/white/thermometer.png",
+      "width": 64,
+      "height": 64,
+      "mode": "RGBA"
+    },
+    {
+      "file": "icons/white/user.png",
+      "width": 64,
+      "height": 64,
+      "mode": "RGBA"
+    },
+    {
+      "file": "icons/white/volumetric_clouds.png",
+      "width": 64,
+      "height": 64,
+      "mode": "RGBA"
+    },
+    {
+      "file": "icons/white/weather.png",
+      "width": 64,
+      "height": 64,
+      "mode": "RGBA"
+    },
+    {
+      "file": "icons/white/wind.png",
+      "width": 64,
+      "height": 64,
+      "mode": "RGBA"
+    },
+    {
+      "file": "icons/white/wingtip_vortices.png",
+      "width": 64,
+      "height": 64,
+      "mode": "RGBA"
+    },
+    {
+      "file": "panels/active_effects_empty.png",
+      "width": 458,
+      "height": 236,
+      "mode": "RGBA"
+    },
+    {
+      "file": "panels/aircraft_fx_empty.png",
+      "width": 1345,
+      "height": 174,
+      "mode": "RGBA"
+    },
+    {
+      "file": "panels/atmospheric_status_empty.png",
+      "width": 614,
+      "height": 276,
+      "mode": "RGBA"
+    },
+    {
+      "file": "panels/button_outline_9slice.png",
+      "width": 128,
+      "height": 48,
+      "mode": "RGBA"
+    },
+    {
+      "file": "panels/current_conditions_empty.png",
+      "width": 706,
+      "height": 276,
+      "mode": "RGBA"
+    },
+    {
+      "file": "panels/footer_status_empty.png",
+      "width": 1345,
+      "height": 64,
+      "mode": "RGBA"
+    },
+    {
+      "file": "panels/input_field_9slice.png",
+      "width": 128,
+      "height": 52,
+      "mode": "RGBA"
+    },
+    {
+      "file": "panels/panel_accent_9slice.png",
+      "width": 128,
+      "height": 128,
+      "mode": "RGBA"
+    },
+    {
+      "file": "panels/panel_glass_9slice.png",
+      "width": 128,
+      "height": 128,
+      "mode": "RGBA"
+    },
+    {
+      "file": "panels/performance_empty.png",
+      "width": 384,
+      "height": 236,
+      "mode": "RGBA"
+    },
+    {
+      "file": "panels/sidebar_active_9slice.png",
+      "width": 128,
+      "height": 64,
+      "mode": "RGBA"
+    },
+    {
+      "file": "panels/weather_timeline_empty.png",
+      "width": 461,
+      "height": 236,
+      "mode": "RGBA"
+    },
+    {
+      "file": "previews/cloudscape_live_preview.png",
+      "width": 613,
+      "height": 192,
+      "mode": "RGB"
+    },
+    {
+      "file": "previews/cloudscape_live_preview@2x.png",
+      "width": 1226,
+      "height": 384,
+      "mode": "RGB"
+    },
+    {
+      "file": "reference/reference_dashboard.png",
+      "width": 1672,
+      "height": 941,
+      "mode": "RGB"
+    }
+  ]
+}

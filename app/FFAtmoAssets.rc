@@ -1,0 +1,11 @@
+#include "FFAtmoResource.h"
+
+IDR_UI_OVERVIEW    RCDATA "ui\\overview.png"
+IDR_UI_EFFECTS     RCDATA "ui\\effects.png"
+IDR_UI_WEATHER     RCDATA "ui\\weather.png"
+IDR_UI_PERFORMANCE RCDATA "ui\\performance.png"
+IDR_UI_PROFILE     RCDATA "ui\\profile.png"
+IDR_UI_ADVANCED    RCDATA "ui\\advanced.png"
+IDR_BRAND_LOGO     RCDATA "ui\\brand-logo.png"
+
+IDI_APP_ICON       ICON "ui\\FFAtmoCompanion.ico"

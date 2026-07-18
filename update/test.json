@@ -1,0 +1,13 @@
+{
+  "version": "0.4.1-test",
+  "channel": "stable",
+  "download_url": "https://github.com/TofferAviation/FreeFlight-Atmospheric-FX/releases/download/v0.4.1-test/FFAtmo-v0.4.1-test.zip",
+  "size_bytes": 0,
+  "sha256": "466ee49fd21f58dcc2c15e3e24ab745d734aff550fbe401645913b09a1b3adec",
+  "notes": [
+    "Aircraft-specific contrail profiles",
+    "Improved wake-vortex lifecycle",
+    "Safer window resizing",
+    "Verified GitHub update workflow"
+  ]
+}

@@ -4,6 +4,10 @@ The companion checks `update/latest.json` from the `main` branch once when it st
 
 ## Stable release procedure
 
+After this workflow is merged to `main`, stable releases are automated. Create and push a semantic version tag such as `v0.4.1`. GitHub Actions builds the companion and updater, runs tests, creates the ZIP, calculates SHA-256, publishes the GitHub Release, and updates the stable manifest. Installed applications see the new manifest the next time they start.
+
+Manual equivalent:
+
 1. Build and test `FFAtmoCompanion.exe`, `FFAtmoUpdater.exe`, the X-Plane plugin, and runtime assets.
 2. Create an update ZIP whose root contains the contents of `package/FFAtmo` (do not wrap those files in another `FFAtmo` directory).
 3. Calculate the ZIP's SHA-256 checksum.

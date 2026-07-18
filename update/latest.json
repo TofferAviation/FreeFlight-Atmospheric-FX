@@ -1,9 +1,9 @@
 {
-  "version": "0.4.6",
+  "version": "0.4.7",
   "channel": "stable",
-  "download_url": "https://github.com/TofferAviation/FreeFlight-Atmospheric-FX/releases/download/v0.4.6/FFAtmo-v0.4.6-win64.zip",
-  "size_bytes": 16668957,
-  "sha256": "c9974175434be0351c1ee39a71d2416816fe2c17b55138fa7928f7fe8e171c3f",
+  "download_url": "https://github.com/TofferAviation/FreeFlight-Atmospheric-FX/releases/download/v0.4.7/FFAtmo-v0.4.7-win64.zip",
+  "size_bytes": 16668963,
+  "sha256": "00b2561e1c1f958a5af31197fc5c93354a7abc5ce040f659624e323e04bb4aee",
   "notes": [
     "New FreeFlight Atmospheric FX release",
     "Performance and stability improvements",

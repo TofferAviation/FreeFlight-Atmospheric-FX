@@ -15,6 +15,7 @@ inline constexpr const char* kUpdateManifestUrl =
 struct UpdateInfo {
     bool checked = false;
     bool available = false;
+    bool previewOnly = false;
     std::string version;
     std::string channel = "stable";
     std::string downloadUrl;
@@ -32,6 +33,7 @@ public:
     UpdateService& operator=(const UpdateService&) = delete;
 
     void start(const std::string& channel = "stable");
+    void showTestPreview();
     UpdateInfo snapshot() const;
     void dismissCurrent();
     bool launchUpdater(const std::wstring& appDirectory, std::string* error = nullptr) const;

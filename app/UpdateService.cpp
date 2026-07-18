@@ -98,7 +98,9 @@ void UpdateService::start(const std::string& channel) {
         return;
     }
     if (worker_.joinable()) return;
-    worker_ = std::thread([this, channel] { check(channel); });
+    const bool liveTest = wcsstr(GetCommandLineW(), L"--test-update-live") != nullptr;
+    const std::string manifestUrl = liveTest ? kTestUpdateManifestUrl : kUpdateManifestUrl;
+    worker_ = std::thread([this, channel, manifestUrl] { check(channel, manifestUrl); });
 }
 
 void UpdateService::showTestPreview() {
@@ -117,9 +119,9 @@ void UpdateService::showTestPreview() {
 UpdateInfo UpdateService::snapshot() const { std::lock_guard<std::mutex> lock(mutex_); return info_; }
 void UpdateService::dismissCurrent() { std::lock_guard<std::mutex> lock(mutex_); info_.available = false; }
 
-void UpdateService::check(std::string channel) {
+void UpdateService::check(std::string channel, std::string manifestUrl) {
     std::string json, error; UpdateInfo next; next.checked = true;
-    if (getHttps(kUpdateManifestUrl, json, error)) {
+    if (getHttps(manifestUrl, json, error)) {
         next.version = stringValue(json, "version"); next.channel = stringValue(json, "channel");
         next.downloadUrl = stringValue(json, "download_url"); next.sha256 = stringValue(json, "sha256");
         next.sizeBytes = numberValue(json, "size_bytes"); next.notes = arrayValue(json, "notes");

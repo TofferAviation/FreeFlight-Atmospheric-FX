@@ -137,12 +137,18 @@ bool panel(const char* id,const char* title,const ImVec2& size) {
     ImGui::TextColored(C(202,221,239),"%s",title); ImGui::Separator(); return true;
 }
 void endPanel(){ImGui::EndChild();}
+TextureAsset* asset(const char* key);
 bool toggle(const char* label,bool& value) {
     ImGui::PushID(label); ImGui::TextUnformatted(label); ImGui::SameLine(ImGui::GetContentRegionMax().x-48);
     ImVec2 p=ImGui::GetCursorScreenPos(); bool clicked=ImGui::InvisibleButton("##toggle",ImVec2(42,22));
     if(clicked)value=!value; ImDrawList* d=ImGui::GetWindowDrawList();
     d->AddRectFilled(p,ImVec2(p.x+42,p.y+22),value?U(28,137,220):U(48,68,86),11);
     float x=value?p.x+31:p.x+11; d->AddCircleFilled(ImVec2(x,p.y+11),7,U(242,248,253)); ImGui::PopID(); return clicked;
+}
+bool headerIconButton(const char* id,const char* icon) {
+    ImGui::PushID(id);ImVec2 p=ImGui::GetCursorScreenPos();bool clicked=ImGui::InvisibleButton("##headerIcon",ImVec2(40,40));ImDrawList* d=ImGui::GetWindowDrawList();
+    d->AddCircleFilled(ImVec2(p.x+20,p.y+20),19,ImGui::IsItemHovered()?U(13,58,94,245):U(4,22,42,230));d->AddCircle(ImVec2(p.x+20,p.y+20),19,U(34,103,153),0,1.2f);
+    if(TextureAsset* a=asset(icon))d->AddImage((ImTextureID)(intptr_t)a->view,ImVec2(p.x+10,p.y+10),ImVec2(p.x+30,p.y+30));ImGui::PopID();return clicked;
 }
 void metric(const char* id,const char* label,const std::string& value,const ImVec4& accent) {
     panel(id,label,ImVec2(0,82)); ImGui::SetWindowFontScale(1.55f); ImGui::TextColored(accent,"%s",value.c_str());
@@ -209,6 +215,7 @@ bool assetSliderFloat(const char* id,float* value,float minimum,float maximum) {
 void sidebar(float width) {
     ImGui::BeginChild("sidebar",ImVec2(width,0),false);
     ImDrawList* d=ImGui::GetWindowDrawList(); ImVec2 wp=ImGui::GetWindowPos();
+    if(TextureAsset* stripes=asset("backgrounds/login_background_dark_curves.png")){ImVec2 ws=ImGui::GetWindowSize();d->AddImage((ImTextureID)(intptr_t)stripes->view,wp,ImVec2(wp.x+ws.x,wp.y+ws.y),ImVec2(.12f,0),ImVec2(.72f,1),U(255,255,255,105));d->AddRectFilled(wp,ImVec2(wp.x+ws.x,wp.y+ws.y),U(1,11,24,85));}
     if(asset("branding/freeflight_atmospheric_fx_logo.png")){ImGui::SetCursorPos(ImVec2(20,18));assetImage("branding/freeflight_atmospheric_fx_logo.png",ImVec2(210,68));ImGui::Dummy(ImVec2(1,8));}
     else if(gBrandTexture){ImGui::SetCursorPos(ImVec2(22,14));ImGui::Image((ImTextureID)(intptr_t)gBrandTexture,ImVec2(width-44,88));}
     else {drawBrandMark(d,ImVec2(wp.x+26,wp.y+24));ImGui::Dummy(ImVec2(1,88));}
@@ -259,8 +266,8 @@ void ringGauge(const char* label,float value,const char* valueText,ImU32 color,f
     ImVec2 ts=ImGui::CalcTextSize(valueText);d->AddText(ImVec2(c.x-ts.x*.5f,c.y-ts.y*.68f),U(235,243,251),valueText);ImVec2 ls=ImGui::CalcTextSize(label);d->AddText(ImVec2(c.x-ls.x*.5f,c.y+8),U(143,164,184),label);ImGui::Dummy(ImVec2(radius*2,radius*2));
 }
 void overview() {
-    ImGui::SetWindowFontScale(1.65f);ImGui::Text("Live Overview");ImGui::SetWindowFontScale(1);ImGui::TextColored(C(83,190,240),"Real-time atmospheric conditions and effects");
-    float maxX=ImGui::GetContentRegionMax().x;ImGui::SameLine(maxX-310);ImGui::TextColored(gStatus.pluginRunning?C(96,222,105):C(150,168,188),gStatus.pluginRunning?"● X-Plane connected":"● Waiting for X-Plane");
+    float maxX=ImGui::GetContentRegionMax().x;ImGui::SetWindowFontScale(1.65f);ImGui::Text("Live Overview");ImGui::SetWindowFontScale(1);ImGui::SameLine(maxX-350);ImGui::PushStyleColor(ImGuiCol_Button,C(3,22,42));ImGui::PushStyleColor(ImGuiCol_Border,C(26,103,158));ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize,1.0f);if(ImGui::Button(gStatus.pluginRunning?"  X-Plane connected":"  Waiting for X-Plane",ImVec2(190,40)))gFooter=gStatus.pluginRunning?"X-Plane telemetry is connected.":"Waiting for the FFAtmo X-Plane bridge.";ImGui::PopStyleVar();ImGui::PopStyleColor(2);ImGui::SameLine();if(headerIconButton("notify","icons/white/bell.png"))gFooter="No new notifications.";ImGui::SameLine();if(headerIconButton("settings","icons/white/settings.png"))gPage=Page::Advanced;ImGui::SameLine();if(headerIconButton("profile","icons/white/user.png"))gPage=Page::Aircraft;
+    ImGui::TextColored(C(57,198,249),"Real-time atmospheric conditions and effects");
     ImGui::Spacing();float avail=ImGui::GetContentRegionAvail().x,gap=14;bool changed=false;
     float topLeft=(avail-gap)*.46f,topRight=avail-gap-topLeft;
     ImGui::BeginChild("atmosphere",ImVec2(topLeft,260),true);ImGui::SetWindowFontScale(1.35f);ImGui::Text("Atmospheric Status");ImGui::SetWindowFontScale(1);ImGui::SameLine(ImGui::GetContentRegionMax().x-70);ImGui::TextColored(C(99,225,103),gStatus.pluginRunning?"LIVE":"STANDBY");
@@ -307,7 +314,8 @@ void updateModal() {
 void frame() {
     pollTelemetry(); ImGui::SetNextWindowPos(ImVec2(0,0));ImGui::SetNextWindowSize(ImGui::GetIO().DisplaySize);
     ImGui::Begin("FFAtmoRoot",nullptr,ImGuiWindowFlags_NoDecoration|ImGuiWindowFlags_NoMove|ImGuiWindowFlags_NoSavedSettings);
-    if(TextureAsset* bg=asset("backgrounds/background_atmospheric_clean.png")){ImVec2 p=ImGui::GetWindowPos(),s=ImGui::GetWindowSize();ImGui::GetWindowDrawList()->AddImage((ImTextureID)(intptr_t)bg->view,p,ImVec2(p.x+s.x,p.y+s.y));}
+    if(TextureAsset* bg=asset("backgrounds/login_background_dark_curves.png")){ImVec2 p=ImGui::GetWindowPos(),s=ImGui::GetWindowSize();ImGui::GetWindowDrawList()->AddImage((ImTextureID)(intptr_t)bg->view,p,ImVec2(p.x+s.x,p.y+s.y),ImVec2(0,0),ImVec2(1,1),U(255,255,255,150));}
+    else if(TextureAsset* bg=asset("backgrounds/background_atmospheric_clean.png")){ImVec2 p=ImGui::GetWindowPos(),s=ImGui::GetWindowSize();ImGui::GetWindowDrawList()->AddImage((ImTextureID)(intptr_t)bg->view,p,ImVec2(p.x+s.x,p.y+s.y));}
     sidebar(245);ImGui::SameLine(0,14);ImGui::BeginChild("content",ImVec2(0,0),false);
     switch(gPage){case Page::Overview:overview();break;case Page::Effects:simplePage("Effects Control","Shape every visible vapour layer");break;case Page::Weather:simplePage("Weather & Realism","Atmospheric triggering and persistence logic");break;case Page::Performance:simplePage("Quality & Performance","Particle budget and frame-time protection");break;case Page::Aircraft:simplePage("Aircraft Profile","Emitter calibration and integration status");break;case Page::Advanced:simplePage("Advanced & Test","Diagnostics and forced-effect controls");break;}ImGui::EndChild();updateModal();ImGui::End();
 }

@@ -25,3 +25,8 @@ The companion checks `update/latest.json` from the `main` branch once when it st
 ## Channels
 
 The initial application uses the `stable` channel. The checker already understands a `beta` channel; a future Settings control can opt users into it.
+
+## Test modes
+
+- `--test-update-popup` renders a non-destructive preview and cannot install files.
+- `--test-update-live` reads `update/test.json` from the updater branch and exercises the real HTTPS download, checksum, staging, rollback, and relaunch path. Use it only with a deliberately published test prerelease.

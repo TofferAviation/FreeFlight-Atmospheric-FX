@@ -55,6 +55,9 @@ jobs:
         shell: pwsh
         run: |
           $archive = "${{ steps.version.outputs.archive }}"
+          # The ICO is compiled into FFAtmoCompanion.exe. Shipping the source ICO
+          # makes Explorer's icon cache lock it and prevents in-place updates.
+          Remove-Item "package/FFAtmo/ui/FFAtmoCompanion.ico" -Force -ErrorAction SilentlyContinue
           Compress-Archive -Path "package/FFAtmo/*" -DestinationPath $archive -Force
           $hash = (Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant()
           $size = (Get-Item $archive).Length

@@ -276,25 +276,25 @@ void overview() {
 void simplePage(const char* title,const char* sub) {ImGui::Text("%s",title);ImGui::TextDisabled("%s",sub);ImGui::Spacing();panel("work","FUNCTIONAL CONTROLS",ImVec2(0,0));ImGui::TextWrapped("This native ImGui page remains connected to FFAtmo. Its detailed visual redesign follows after Atmospheric Operations is approved.");endPanel();}
 void updateModal() {
     ffatmo::app::UpdateInfo update=gUpdateService.snapshot();if(update.available)ImGui::OpenPopup("##update_available");
-    ImVec2 display=ImGui::GetIO().DisplaySize;ImVec2 modalSize(700,std::min(650.0f,display.y-36.0f));
+    ImVec2 display=ImGui::GetIO().DisplaySize;ImVec2 modalSize(610,std::min(760.0f,display.y-28.0f));
     ImGui::SetNextWindowPos(ImVec2(display.x*.5f,display.y*.5f),ImGuiCond_Appearing,ImVec2(.5f,.5f));
     ImGui::SetNextWindowSize(modalSize,ImGuiCond_Always);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding,16);ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize,1.5f);ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,ImVec2(24,20));
     ImGui::PushStyleColor(ImGuiCol_PopupBg,C(2,12,27,252));ImGui::PushStyleColor(ImGuiCol_Border,C(22,155,255));
     if(ImGui::BeginPopupModal("##update_available",nullptr,ImGuiWindowFlags_NoTitleBar|ImGuiWindowFlags_NoResize|ImGuiWindowFlags_NoScrollbar|ImGuiWindowFlags_NoSavedSettings)){
         float width=ImGui::GetContentRegionAvail().x;
-        if(TextureAsset* logo=asset("branding/freeflight_atmospheric_fx_logo.png"))ImGui::Image((ImTextureID)(intptr_t)logo->view,ImVec2(120,39));else{drawBrandMark(ImGui::GetWindowDrawList(),ImGui::GetCursorScreenPos());ImGui::Dummy(ImVec2(120,39));}
+        if(TextureAsset* logo=asset("branding/freeflight_emblem.png"))ImGui::Image((ImTextureID)(intptr_t)logo->view,ImVec2(82,42));else{drawBrandMark(ImGui::GetWindowDrawList(),ImGui::GetCursorScreenPos());ImGui::Dummy(ImVec2(82,42));}
         ImGui::SameLine(width-18);if(ImGui::Button("X",ImVec2(30,30))){gUpdateService.dismissCurrent();ImGui::CloseCurrentPopup();}
-        ImGui::SetCursorPosY(68);ImGui::SetWindowFontScale(.9f);float nw=ImGui::CalcTextSize("N E W   V E R S I O N").x;ImGui::SetCursorPosX((modalSize.x-nw)*.5f);ImGui::TextColored(C(42,190,255),"N E W   V E R S I O N");ImGui::SetWindowFontScale(1);
-        ImGui::SetWindowFontScale(2.0f);float hw=ImGui::CalcTextSize("Update available").x;ImGui::SetCursorPosX((modalSize.x-hw)*.5f);ImGui::Text("Update available");ImGui::SetWindowFontScale(1);
+        ImGui::SetCursorPosY(78);ImGui::SetWindowFontScale(.9f);float nw=ImGui::CalcTextSize("N E W   V E R S I O N").x;ImGui::SetCursorPosX((modalSize.x-nw)*.5f);ImGui::TextColored(C(42,190,255),"N E W   V E R S I O N");ImGui::SetWindowFontScale(1);
+        ImGui::SetWindowFontScale(2.15f);float hw=ImGui::CalcTextSize("Update available").x;ImGui::SetCursorPosX((modalSize.x-hw)*.5f);ImGui::Text("Update available");ImGui::SetWindowFontScale(1);
         std::string ready="Atmospheric FX v"+update.version+" is ready to install.";float rw=ImGui::CalcTextSize(ready.c_str()).x;ImGui::SetCursorPosX((modalSize.x-rw)*.5f);ImGui::TextColored(C(74,202,247),"%s",ready.c_str());ImGui::Spacing();
-        ImGui::PushStyleColor(ImGuiCol_ChildBg,C(4,20,39));ImGui::BeginChild("versions",ImVec2(0,118),true,ImGuiWindowFlags_NoScrollbar);float card=ImGui::GetContentRegionAvail().x;
-        ImGui::SetCursorPos(ImVec2(28,18));ImGui::BeginGroup();ImGui::TextDisabled("Current version");ImGui::SetWindowFontScale(1.65f);ImGui::Text("v%s",ffatmo::app::kAppVersion);ImGui::SetWindowFontScale(1);ImGui::EndGroup();
-        ImGui::SetCursorPos(ImVec2(card*.47f,43));ImGui::SetWindowFontScale(1.8f);ImGui::TextColored(C(42,166,255),"->");ImGui::SetWindowFontScale(1);
-        ImGui::SetCursorPos(ImVec2(card*.65f,18));ImGui::BeginGroup();ImGui::TextDisabled("Latest version");ImGui::SetWindowFontScale(1.65f);ImGui::Text("v%s",update.version.c_str());ImGui::SetWindowFontScale(1);ImGui::EndGroup();
-        ImGui::SetCursorPos(ImVec2(28,91));if(update.sizeBytes)ImGui::TextDisabled("Download size  %.0f MB",update.sizeBytes/1048576.0);ImGui::SameLine(card*.55f);ImGui::TextDisabled("Estimated time  2 minutes");ImGui::EndChild();ImGui::PopStyleColor();
+        ImGui::PushStyleColor(ImGuiCol_ChildBg,C(4,20,39));ImGui::BeginChild("versions",ImVec2(0,140),true,ImGuiWindowFlags_NoScrollbar);float card=ImGui::GetContentRegionAvail().x;
+        ImGui::SetCursorPos(ImVec2(28,25));ImGui::BeginGroup();ImGui::TextDisabled("Current version");ImGui::SetWindowFontScale(1.65f);ImGui::Text("v%s",ffatmo::app::kAppVersion);ImGui::SetWindowFontScale(1);ImGui::EndGroup();
+        ImGui::SetCursorPos(ImVec2(card*.47f,52));ImGui::SetWindowFontScale(1.8f);ImGui::TextColored(C(42,166,255),"->");ImGui::SetWindowFontScale(1);
+        ImGui::SetCursorPos(ImVec2(card*.65f,25));ImGui::BeginGroup();ImGui::TextDisabled("Latest version");ImGui::SetWindowFontScale(1.65f);ImGui::Text("v%s",update.version.c_str());ImGui::SetWindowFontScale(1);ImGui::EndGroup();
+        ImGui::SetCursorPos(ImVec2(28,109));if(update.sizeBytes)ImGui::TextDisabled("Download size  %.0f MB",update.sizeBytes/1048576.0);ImGui::SameLine(card*.54f);ImGui::TextDisabled("Estimated time  2 minutes");ImGui::EndChild();ImGui::PopStyleColor();
         ImGui::Spacing();ImGui::SetWindowFontScale(1.2f);ImGui::Text("What's new");ImGui::SetWindowFontScale(1);
-        ImGui::PushStyleColor(ImGuiCol_ChildBg,C(3,17,33));ImGui::BeginChild("notes",ImVec2(0,142),true,ImGuiWindowFlags_NoScrollbar);for(const std::string& note:update.notes){assetImage("icons/active_blue/adaptive_quality.png",ImVec2(18,18));ImGui::SameLine();ImGui::TextColored(C(218,234,247),"%s",note.c_str());}ImGui::EndChild();ImGui::PopStyleColor();
+        ImGui::PushStyleColor(ImGuiCol_ChildBg,C(3,17,33));ImGui::BeginChild("notes",ImVec2(0,170),true,ImGuiWindowFlags_NoScrollbar);for(const std::string& note:update.notes){assetImage("icons/active_blue/checkmark.png",ImVec2(20,20));ImGui::SameLine();ImGui::TextColored(C(218,234,247),"%s",note.c_str());ImGui::Dummy(ImVec2(1,2));}ImGui::EndChild();ImGui::PopStyleColor();
         ImGui::Spacing();assetImage("icons/active_blue/adaptive_quality.png",ImVec2(27,27));ImGui::SameLine();ImGui::Text("Verified FreeFlight update");ImGui::Separator();
         ImGui::PushStyleColor(ImGuiCol_FrameBg,C(7,30,56));ImGui::Checkbox("Install future updates automatically",&gAutomaticUpdates);ImGui::PopStyleColor();ImGui::Spacing();
         float buttonWidth=(width-14)*.5f;if(ImGui::Button("REMIND ME LATER",ImVec2(buttonWidth,50))){gUpdateService.dismissCurrent();ImGui::CloseCurrentPopup();}ImGui::SameLine(0,14);

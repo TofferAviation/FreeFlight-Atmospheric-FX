@@ -33,6 +33,7 @@ if(FFATMO_BUILD_COMPANION AND WIN32)
     endif()
     add_executable(FFAtmoCompanion WIN32
         app/ImGuiCompanion.cpp
+        app/UpdateService.cpp
         app/FFAtmoAssets.rc
         app/TelemetryProvider.cpp
         ${IMGUI_DIR}/imgui.cpp
@@ -43,7 +44,7 @@ if(FFATMO_BUILD_COMPANION AND WIN32)
         ${IMGUI_DIR}/backends/imgui_impl_dx11.cpp
     )
     target_include_directories(FFAtmoCompanion PRIVATE src app "${IMGUI_DIR}" "${IMGUI_DIR}/backends")
-    target_link_libraries(FFAtmoCompanion PRIVATE ffatmo_core shell32 ole32 windowscodecs d3d11 dxgi)
+    target_link_libraries(FFAtmoCompanion PRIVATE ffatmo_core shell32 ole32 windowscodecs d3d11 dxgi winhttp)
     target_compile_definitions(FFAtmoCompanion PRIVATE UNICODE _UNICODE NOMINMAX)
     if(MSVC)
         target_compile_options(FFAtmoCompanion PRIVATE /W4 /permissive-)
@@ -54,6 +55,14 @@ if(FFATMO_BUILD_COMPANION AND WIN32)
     set_target_properties(FFAtmoCompanion PROPERTIES
         OUTPUT_NAME "FFAtmoCompanion"
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/package/FFAtmo"
+    )
+
+    add_executable(FFAtmoUpdater WIN32 app/UpdaterMain.cpp)
+    target_link_libraries(FFAtmoUpdater PRIVATE shell32 winhttp bcrypt)
+    set_target_properties(FFAtmoUpdater PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/package/FFAtmo"
+        RUNTIME_OUTPUT_DIRECTORY_DEBUG "${CMAKE_CURRENT_SOURCE_DIR}/package/FFAtmo"
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_CURRENT_SOURCE_DIR}/package/FFAtmo"
     )
 endif()
 

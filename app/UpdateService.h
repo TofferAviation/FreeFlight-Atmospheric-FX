@@ -8,7 +8,10 @@
 
 namespace ffatmo::app {
 
-inline constexpr const char* kAppVersion = "0.4.0";
+#ifndef FFATMO_APP_VERSION
+#define FFATMO_APP_VERSION "0.4.0"
+#endif
+inline constexpr const char* kAppVersion = FFATMO_APP_VERSION;
 inline constexpr const char* kUpdateManifestUrl =
     "https://raw.githubusercontent.com/TofferAviation/FreeFlight-Atmospheric-FX/main/update/latest.json";
 inline constexpr const char* kTestUpdateManifestUrl =

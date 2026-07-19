@@ -303,59 +303,45 @@ void effectsPage() {
 }
 void simplePage(const char* title,const char* sub) {ImGui::Text("%s",title);ImGui::TextDisabled("%s",sub);ImGui::Spacing();panel("work","FUNCTIONAL CONTROLS",ImVec2(0,0));ImGui::TextWrapped("This native ImGui page remains connected to FFAtmo. Its detailed visual redesign follows after Atmospheric Operations is approved.");endPanel();}
 void loginPage(const ffatmo::app::GithubAuthState& auth) {
-    ImVec2 display=ImGui::GetContentRegionAvail();
+    const ImVec2 available=ImGui::GetContentRegionAvail();const ImVec2 origin=ImGui::GetCursorScreenPos();
+    const float scale=std::min(available.x/1672.0f,available.y/941.0f);
+    const ImVec2 canvas(origin.x+(available.x-1672.0f*scale)*.5f,origin.y+(available.y-941.0f*scale)*.5f);
     ImDrawList* d=ImGui::GetWindowDrawList();
-    ImVec2 origin=ImGui::GetCursorScreenPos();
-    float scale=std::clamp(display.y/930.0f,.72f,1.08f);
-    float cardW=std::clamp(display.x*.35f,470.0f*scale,590.0f*scale);
-    float cardH=std::min(display.y-70.0f,660.0f*scale);
-    float cardX=origin.x+display.x-cardW-std::max(42.0f,display.x*.075f);
-    float cardY=origin.y+(display.y-cardH)*.5f;
+    auto image=[&](const char* key,float x,float y,float w,float h,ImU32 tint=IM_COL32_WHITE){if(TextureAsset* a=asset(key))d->AddImage((ImTextureID)(intptr_t)a->view,ImVec2(canvas.x+x*scale,canvas.y+y*scale),ImVec2(canvas.x+(x+w)*scale,canvas.y+(y+h)*scale),ImVec2(0,0),ImVec2(1,1),tint);};
+    auto textAt=[&](float x,float y,const char* value,const ImVec4& color,float fontScale=1.0f){ImGui::SetCursorScreenPos(ImVec2(canvas.x+x*scale,canvas.y+y*scale));ImGui::SetWindowFontScale(fontScale*scale);ImGui::TextColored(color,"%s",value);ImGui::SetWindowFontScale(1);};
+    auto centeredText=[&](float x,float y,float w,const char* value,const ImVec4& color,float fontScale=1.0f){ImGui::SetWindowFontScale(fontScale*scale);float width=ImGui::CalcTextSize(value).x;ImGui::SetCursorScreenPos(ImVec2(canvas.x+(x+w*.5f)*scale-width*.5f,canvas.y+y*scale));ImGui::TextColored(color,"%s",value);ImGui::SetWindowFontScale(1);};
 
-    // Left-hand brand lockup. These remain separate assets so the page stays crisp at every size.
-    ImGui::SetCursorScreenPos(ImVec2(origin.x+display.x*.105f,origin.y+display.y*.19f));
-    float logoW=std::min(display.x*.40f,610.0f*scale);
-    if(TextureAsset* logo=asset("branding/freeflight_atmospheric_fx_logo.png")){
-        float logoH=logoW*(static_cast<float>(logo->height)/static_cast<float>(logo->width));
-        ImGui::Image((ImTextureID)(intptr_t)logo->view,ImVec2(logoW,logoH));
-    }else{drawBrandMark(d,ImGui::GetCursorScreenPos());ImGui::Dummy(ImVec2(logoW,160*scale));}
-    ImGui::SetCursorScreenPos(ImVec2(origin.x+display.x*.205f,origin.y+display.y*.61f));
-    ImGui::SetWindowFontScale(1.65f*scale);ImGui::TextColored(C(89,178,249),"Atmosphere, refined.");ImGui::SetWindowFontScale(1);
-    ImGui::SetCursorScreenPos(ImVec2(origin.x+display.x*.11f,origin.y+display.y*.79f));
-    const char* featureIcons[]={"icons/active_blue/volumetric_clouds.png","icons/active_blue/dynamic_weather.png","icons/active_blue/adaptive_lighting.png"};
+    image("login/branding/freeflight_atmospheric_fx_lockup.png",190,205,650,349);
+    image("login/branding/tagline_atmosphere_refined.png",330,588,310,30);
+    const char* featureIcons[]={"login/icons/color/volumetric_clouds.png","login/icons/color/dynamic_weather.png","login/icons/color/adaptive_lighting.png"};
     const char* featureNames[]={"Volumetric Clouds","Dynamic Weather","Adaptive Effects"};
-    for(int i=0;i<3;++i){ImGui::BeginGroup();assetImage(featureIcons[i],ImVec2(38*scale,38*scale));ImGui::SameLine();ImGui::TextColored(C(117,190,244),"%s",featureNames[i]);ImGui::EndGroup();if(i<2)ImGui::SameLine(0,45*scale);}
+    const float featureX[]={190,385,575};
+    for(int i=0;i<3;++i){image(featureIcons[i],featureX[i],758,42,42);textAt(featureX[i]+48,770,featureNames[i],C(104,188,243),.82f);if(i<2)image("login/controls/feature_divider_vertical.png",featureX[i]+177,750,1,72);}
 
-    ImGui::SetCursorScreenPos(ImVec2(cardX,cardY));
-    ImGui::PushStyleColor(ImGuiCol_ChildBg,C(2,16,34,242));
-    ImGui::PushStyleColor(ImGuiCol_Border,C(45,143,211));
-    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding,18);ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize,1.5f);ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,ImVec2(52*scale,46*scale));
-    ImGui::BeginChild("githubLoginCard",ImVec2(cardW,cardH),true,ImGuiWindowFlags_NoScrollbar);
-    ImGui::SetWindowFontScale(2.05f*scale);ImGui::Text("Welcome back");ImGui::SetWindowFontScale(1);
-    ImGui::TextColored(C(146,201,239),"Sign in to continue to Atmospheric FX");
-    ImGui::Dummy(ImVec2(1,25*scale));
+    const float cardX=925,cardY=141,cardW=595,cardH=659,contentX=1002,contentW=443;
+    image("login/panels/login_card_empty.png",cardX,cardY,cardW,cardH);
+    textAt(contentX,192,"Welcome back",C(226,237,248),1.75f);
+    textAt(contentX,234,"Sign in to continue to Atmospheric FX",C(125,190,234),.88f);
 
     if(auth.phase==ffatmo::app::GithubAuthPhase::Checking){
-        ImGui::Dummy(ImVec2(1,65*scale));ImGui::SetWindowFontScale(1.35f);ImGui::TextColored(C(68,188,255),"Connecting securely to GitHub...");ImGui::SetWindowFontScale(1);ImGui::TextDisabled("Checking for an existing encrypted session.");
+        image("login/icons/color/secure_connection.png",contentX,318,54,54);textAt(contentX+72,322,"Connecting securely to GitHub",C(226,237,248),1.08f);textAt(contentX+72,354,"Checking for an encrypted session on this PC...",C(137,162,188),.78f);
     }else if(auth.phase==ffatmo::app::GithubAuthPhase::AwaitingUser){
-        ImGui::Text("AUTHORIZE THIS DEVICE");ImGui::TextWrapped("GitHub opened in your browser. Enter this one-time code to approve Atmospheric FX:");ImGui::Dummy(ImVec2(1,14));
-        ImGui::PushStyleColor(ImGuiCol_ChildBg,C(5,26,49));ImGui::BeginChild("deviceCode",ImVec2(0,96*scale),true);ImGui::SetWindowFontScale(2.15f);float codeW=ImGui::CalcTextSize(auth.userCode.c_str()).x;ImGui::SetCursorPosX((ImGui::GetContentRegionAvail().x-codeW)*.5f);ImGui::TextColored(C(75,190,255),"%s",auth.userCode.c_str());ImGui::SetWindowFontScale(1);ImGui::EndChild();ImGui::PopStyleColor();
-        if(ImGui::Button("COPY CODE",ImVec2((ImGui::GetContentRegionAvail().x-10)*.5f,46*scale)))ImGui::SetClipboardText(auth.userCode.c_str());ImGui::SameLine();if(ImGui::Button("OPEN GITHUB",ImVec2(-1,46*scale)))gGithubAuth.openVerificationPage();
-        ImGui::Dummy(ImVec2(1,12));ImGui::TextDisabled("Waiting for approval... You can return here after authorizing.");
+        textAt(contentX,292,"AUTHORIZE THIS DEVICE",C(226,237,248),.80f);textAt(contentX,322,"Enter this one-time code on the GitHub page:",C(180,204,225),.82f);
+        d->AddRectFilled(ImVec2(canvas.x+contentX*scale,canvas.y+366*scale),ImVec2(canvas.x+(contentX+contentW)*scale,canvas.y+466*scale),U(5,25,47,240),12*scale);d->AddRect(ImVec2(canvas.x+contentX*scale,canvas.y+366*scale),ImVec2(canvas.x+(contentX+contentW)*scale,canvas.y+466*scale),U(38,147,225),12*scale,0,1.2f*scale);
+        centeredText(contentX,391,contentW,auth.userCode.c_str(),C(66,190,255),2.0f);
+        ImGui::SetCursorScreenPos(ImVec2(canvas.x+contentX*scale,canvas.y+493*scale));if(ImGui::Button("COPY CODE",ImVec2(214*scale,52*scale)))ImGui::SetClipboardText(auth.userCode.c_str());ImGui::SetCursorScreenPos(ImVec2(canvas.x+(contentX+229)*scale,canvas.y+493*scale));if(ImGui::Button("OPEN GITHUB",ImVec2(214*scale,52*scale)))gGithubAuth.openVerificationPage();
+        centeredText(contentX,570,contentW,"Waiting for approval in your browser...",C(137,162,188),.76f);
     }else{
-        ImGui::Text("SIGN IN WITH GITHUB");
-        ImGui::TextWrapped("Use your own GitHub account. Authentication happens on GitHub, so FreeFlight never sees or stores your password.");
-        ImGui::Dummy(ImVec2(1,22*scale));
-        ImGui::PushStyleColor(ImGuiCol_ChildBg,C(5,24,45));ImGui::BeginChild("secureInfo",ImVec2(0,112*scale),true);assetImage("icons/active_blue/user.png",ImVec2(32,32));ImGui::SameLine();ImGui::BeginGroup();ImGui::Text("Secure GitHub authorization");ImGui::TextDisabled("Browser-based device login");ImGui::TextDisabled("Encrypted session storage on this PC");ImGui::EndGroup();ImGui::EndChild();ImGui::PopStyleColor();
-        if(auth.phase==ffatmo::app::GithubAuthPhase::Error){ImGui::TextColored(C(255,116,116),"%s",auth.error.c_str());}
-        ImGui::Checkbox("Remember me on this computer",&gLoginRemember);
-        ImGui::Dummy(ImVec2(1,8));ImGui::PushStyleColor(ImGuiCol_Button,C(16,100,224));ImGui::PushStyleColor(ImGuiCol_ButtonHovered,C(24,132,255));ImGui::PushStyleColor(ImGuiCol_Border,C(245,187,74));ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize,1.2f);
-        if(ImGui::Button("CONTINUE WITH GITHUB",ImVec2(-1,58*scale)))gGithubAuth.begin(gLoginRemember);
-        ImGui::PopStyleVar();ImGui::PopStyleColor(3);
-        ImGui::Dummy(ImVec2(1,14));float secured=ImGui::CalcTextSize("FreeFlight LLC  -  Secure connection").x;ImGui::SetCursorPosX((ImGui::GetContentRegionAvail().x-secured)*.5f);ImGui::TextDisabled("FreeFlight LLC  -  Secure connection");
+        textAt(contentX,290,"SIGN IN WITH GITHUB",C(226,237,248),.80f);
+        textAt(contentX,317,"Use your own GitHub account. Authentication happens on GitHub,",C(195,214,230),.76f);textAt(contentX,338,"so FreeFlight never sees or stores your password.",C(195,214,230),.76f);
+        d->AddRectFilled(ImVec2(canvas.x+contentX*scale,canvas.y+383*scale),ImVec2(canvas.x+(contentX+contentW)*scale,canvas.y+493*scale),U(5,25,47,238),13*scale);d->AddRect(ImVec2(canvas.x+contentX*scale,canvas.y+383*scale),ImVec2(canvas.x+(contentX+contentW)*scale,canvas.y+493*scale),U(39,147,224),13*scale,0,1.2f*scale);
+        image("login/icons/color/secure_connection.png",contentX+28,407,44,44);textAt(contentX+92,394,"Secure GitHub authorization",C(226,237,248),.78f);textAt(contentX+92,423,"Browser-based device login",C(137,162,188),.76f);textAt(contentX+92,452,"Encrypted session storage on this PC",C(137,162,188),.76f);
+        if(auth.phase==ffatmo::app::GithubAuthPhase::Error)textAt(contentX,500,auth.error.c_str(),C(255,116,116),.72f);
+        ImGui::SetCursorScreenPos(ImVec2(canvas.x+contentX*scale,canvas.y+516*scale));ImGui::InvisibleButton("##remember",ImVec2(28*scale,28*scale));if(ImGui::IsItemClicked())gLoginRemember=!gLoginRemember;image(gLoginRemember?"login/controls/checkbox_checked.png":"login/controls/checkbox_unchecked.png",contentX,516,28,28);textAt(contentX+36,521,"Remember me on this computer",C(202,220,235),.76f);
+        image("login/buttons/sign_in_button_empty.png",contentX,560,contentW,60);ImGui::SetCursorScreenPos(ImVec2(canvas.x+contentX*scale,canvas.y+560*scale));bool loginClicked=ImGui::InvisibleButton("##githubLogin",ImVec2(contentW*scale,60*scale));if(ImGui::IsItemHovered())d->AddRect(ImVec2(canvas.x+contentX*scale,canvas.y+560*scale),ImVec2(canvas.x+(contentX+contentW)*scale,canvas.y+620*scale),U(255,215,91),12*scale,0,2*scale);centeredText(contentX,580,contentW,"CONTINUE WITH GITHUB",C(239,247,255),.82f);if(loginClicked)gGithubAuth.begin(gLoginRemember);
+        centeredText(contentX,654,contentW,"FreeFlight LLC  -  Secure connection",C(121,147,174),.72f);
     }
-    ImGui::EndChild();ImGui::PopStyleVar(3);ImGui::PopStyleColor(2);
-    ImGui::SetCursorScreenPos(ImVec2(origin.x+display.x-170,origin.y+display.y-30));ImGui::TextDisabled("Atmospheric FX v%s",ffatmo::app::kAppVersion);
+    textAt(1478,900,(std::string("Atmospheric FX v")+ffatmo::app::kAppVersion).c_str(),C(121,147,174),.72f);
 }
 void updateModal() {
     ffatmo::app::UpdateInfo update=gUpdateService.snapshot();if(update.available)ImGui::OpenPopup("##update_available");
@@ -390,10 +376,11 @@ void updateModal() {
 void frame() {
     pollTelemetry(); ImGui::SetNextWindowPos(ImVec2(0,0));ImGui::SetNextWindowSize(ImGui::GetIO().DisplaySize);
     ImGui::Begin("FFAtmoRoot",nullptr,ImGuiWindowFlags_NoDecoration|ImGuiWindowFlags_NoMove|ImGuiWindowFlags_NoSavedSettings);
-    if(TextureAsset* bg=asset("backgrounds/login_background_dark_curves.png")){ImVec2 p=ImGui::GetWindowPos(),s=ImGui::GetWindowSize();ImGui::GetWindowDrawList()->AddImage((ImTextureID)(intptr_t)bg->view,p,ImVec2(p.x+s.x,p.y+s.y),ImVec2(0,0),ImVec2(1,1),U(255,255,255,150));}
-    else if(TextureAsset* bg=asset("backgrounds/background_atmospheric_clean.png")){ImVec2 p=ImGui::GetWindowPos(),s=ImGui::GetWindowSize();ImGui::GetWindowDrawList()->AddImage((ImTextureID)(intptr_t)bg->view,p,ImVec2(p.x+s.x,p.y+s.y));}
     ffatmo::app::GithubAuthState auth=gGithubAuth.snapshot();
-    if(auth.phase!=ffatmo::app::GithubAuthPhase::Authorized){loginPage(auth);ImGui::End();return;}
+    ImVec2 p=ImGui::GetWindowPos(),s=ImGui::GetWindowSize();
+    if(auth.phase!=ffatmo::app::GithubAuthPhase::Authorized){if(TextureAsset* bg=asset("login/backgrounds/login_background_clean.png"))ImGui::GetWindowDrawList()->AddImage((ImTextureID)(intptr_t)bg->view,p,ImVec2(p.x+s.x,p.y+s.y));loginPage(auth);ImGui::End();return;}
+    if(TextureAsset* bg=asset("backgrounds/login_background_dark_curves.png"))ImGui::GetWindowDrawList()->AddImage((ImTextureID)(intptr_t)bg->view,p,ImVec2(p.x+s.x,p.y+s.y),ImVec2(0,0),ImVec2(1,1),U(255,255,255,150));
+    else if(TextureAsset* bg=asset("backgrounds/background_atmospheric_clean.png"))ImGui::GetWindowDrawList()->AddImage((ImTextureID)(intptr_t)bg->view,p,ImVec2(p.x+s.x,p.y+s.y));
     sidebar(245);ImGui::SameLine(0,14);ImGui::BeginChild("content",ImVec2(0,0),false);
     switch(gPage){case Page::Overview:overview();break;case Page::Effects:effectsPage();break;case Page::Weather:simplePage("Weather & Realism","Atmospheric triggering and persistence logic");break;case Page::Performance:simplePage("Quality & Performance","Particle budget and frame-time protection");break;case Page::Aircraft:simplePage("Aircraft Profile","Emitter calibration and integration status");break;case Page::Advanced:simplePage("Advanced & Test","Diagnostics and forced-effect controls");break;}ImGui::EndChild();updateModal();ImGui::End();
 }

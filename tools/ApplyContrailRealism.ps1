@@ -90,18 +90,18 @@ foreach ($path in $Paths) {
 
     $text = Replace-UniqueOrApplied $text `
         (" NAME ffatmo_contrail_core${newline} MAX_PARTICLES 6000") `
-        (" NAME ffatmo_contrail_core${newline} MAX_PARTICLES 9000") `
+        (" NAME ffatmo_contrail_core${newline} MAX_PARTICLES 16000") `
         "core particle budget"
 
     $text = Replace-UniqueOrApplied $text `
         ("`t0.000000`t1.200000${newline}`t0.180000`t2.400000${newline}`t1.000000`t6.000000") `
-        ("`t0.000000`t1.000000${newline}`t0.180000`t2.250000${newline}`t1.000000`t6.800000") `
-        "core expansion"
+        ("`t0.000000`t2.200000${newline}`t0.140000`t5.800000${newline}`t0.450000`t10.000000${newline}`t1.000000`t18.000000") `
+        "core volumetric expansion"
 
     $text = Replace-UniqueOrApplied $text `
         ("`t0.000000`t0.000000${newline}`t0.050000`t0.180000${newline}`t0.650000`t0.120000${newline}`t1.000000`t0.000000") `
-        ("`t0.000000`t0.000000${newline}`t0.045000`t0.145000${newline}`t0.300000`t0.155000${newline}`t0.720000`t0.090000${newline}`t1.000000`t0.000000") `
-        "core opacity curve"
+        ("`t0.000000`t0.000000${newline}`t0.035000`t0.100000${newline}`t0.160000`t0.220000${newline}`t0.520000`t0.180000${newline}`t0.820000`t0.070000${newline}`t1.000000`t0.000000") `
+        "core soft opacity curve"
 
     $text = Replace-UniqueOrApplied $text `
         (" NAME ffatmo_primary_wake${newline} MAX_PARTICLES 8000") `
@@ -116,40 +116,40 @@ foreach ($path in $Paths) {
     foreach ($emitter in @("FFATMO_ENGINE_LEFT", "FFATMO_ENGINE_RIGHT")) {
         $text = Replace-InSubEmitter $text $emitter 0 `
             ("`t1.000000`t145.000000`t165.000000") `
-            ("`t1.000000`t225.000000`t250.000000") `
+            ("`t1.000000`t360.000000`t430.000000") `
             "engine core density"
 
         $text = Replace-InSubEmitter $text $emitter 0 `
             ("`t1.000000`t0.650000`t1.000000") `
-            ("`t1.000000`t0.550000`t0.900000") `
+            ("`t1.000000`t1.250000`t2.100000") `
             "engine core size variation"
 
         $text = Replace-InSubEmitter $text $emitter 0 `
             ("`t1.000000`t0.800000`t1.000000") `
-            ("`t1.000000`t0.580000`t0.780000") `
+            ("`t1.000000`t0.650000`t0.880000") `
             "engine core alpha variation"
 
         $text = Replace-InSubEmitter $text $emitter 0 `
             ("`t0.000000`t8.000000`t12.000000${newline}`t1.000000`t8.000000`t12.000000") `
-            ("`t0.000000`t10.000000`t16.000000${newline}`t1.000000`t10.000000`t16.000000") `
+            ("`t0.000000`t16.000000`t24.000000${newline}`t1.000000`t16.000000`t24.000000") `
             "engine core lifetime"
 
         $text = Replace-InSubEmitter $text $emitter 4 `
             ("`t1.000000`t10.000000`t14.000000") `
-            ("`t1.000000`t14.000000`t19.000000") `
+            ("`t1.000000`t12.000000`t16.000000") `
             "primary wake density"
 
         $text = Replace-InSubEmitter $text $emitter 5 `
             ("`t1.000000`t6.000000`t9.000000") `
-            ("`t1.000000`t9.000000`t13.000000") `
+            ("`t1.000000`t4.000000`t6.000000") `
             "secondary curtain density"
 
         $text = Replace-InSubEmitter $text $emitter 1 `
             ("`t1.000000`t7.000000`t11.000000") `
-            ("`t1.000000`t10.000000`t15.000000") `
+            ("`t1.000000`t2.000000`t4.000000") `
             "cirrus transition density"
     }
 
     Set-Content -Path $path -Value $text -Encoding utf8 -NoNewline
-    Write-Host "Applied layered contrail realism calibration to $path"
+    Write-Host "Applied dense continuous contrail calibration to $path"
 }

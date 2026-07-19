@@ -2,8 +2,8 @@
   "version": "0.4.8",
   "channel": "stable",
   "download_url": "https://github.com/TofferAviation/FreeFlight-Atmospheric-FX/releases/download/v0.4.8/FFAtmo-v0.4.8-win64.zip",
-  "size_bytes": 16668993,
-  "sha256": "718adf0e6a97a777707e7d92c49e36d332a4816b6035dbc0f0205fb84290c5c3",
+  "size_bytes": 16668991,
+  "sha256": "56ce438ce4445ec40962e3056d9dbbba739035610e9bc8a7d3e04c433506529d",
   "notes": [
     "Denser layered engine contrails",
     "Softer particle opacity with greater overlap",

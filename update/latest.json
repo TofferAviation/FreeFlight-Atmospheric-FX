@@ -2,12 +2,13 @@
   "version": "0.4.14",
   "channel": "stable",
   "download_url": "https://github.com/TofferAviation/FreeFlight-Atmospheric-FX/releases/download/v0.4.14/FFAtmo-v0.4.14-win64.zip",
-  "size_bytes": 17713491,
-  "sha256": "db7228faa72285dd8656e630522228bd849f156e40b271f4d990cbe2bf9921e7",
+  "size_bytes": 17713526,
+  "sha256": "0ea8c684791b6ff026f6b765ea74f0eb18079b0faf60a4631d4857197ba0d4c2",
   "notes": [
-    "Automatically syncs updated particle assets into the selected X-Plane plugin folder",
-    "Writes an FFAtmo asset-version marker so the installed simulator assets can be verified",
-    "Keeps independent Contrails Only, Vortices Only and Over-wing Only testing controls",
-    "Retains the dense volumetric contrail calibration for the next in-simulator test"
+    "Side-vortex particles now contract as they are entrained into the wake",
+    "Higher-rate smaller vortex particles replace the dotted bead appearance",
+    "Primary wake briefly rolls up, then tightens and fades instead of growing into large blobs",
+    "Engine contrails remain dense but no longer expand into oversized late-life discs",
+    "Updated particle assets continue to sync automatically into the selected X-Plane plugin folder"
   ]
 }

@@ -8,6 +8,7 @@
 #include "XPLMScenery.h"
 
 #include <array>
+#include <chrono>
 #include <cstddef>
 #include <string>
 #include <vector>
@@ -18,11 +19,14 @@ class ParticleInstance {
 public:
     ~ParticleInstance();
 
+    bool load(const std::string& objectPath, std::string* error = nullptr);
     bool load(const std::string& objectPath,
               const AircraftProfile& profile,
               std::string* error = nullptr);
     void unload();
     void resetTrail();
+    void update(const AircraftPose& pose,
+                const std::array<float, PublishedDatarefs::InstanceValueCount>& values);
     void update(const AircraftPose& pose,
                 const std::array<float, PublishedDatarefs::InstanceValueCount>& values,
                 float dtSeconds);
@@ -65,6 +69,8 @@ private:
     bool hadActiveContrail_ = false;
     bool hasLastPose_ = false;
     AircraftPose lastPose_ {};
+    bool hasUpdateClock_ = false;
+    std::chrono::steady_clock::time_point lastUpdateClock_ {};
 };
 
 }  // namespace ffatmo

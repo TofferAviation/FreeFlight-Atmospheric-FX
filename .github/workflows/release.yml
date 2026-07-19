@@ -37,6 +37,10 @@ jobs:
         shell: pwsh
         run: ./tools/ApplyContrailRealism.ps1
 
+      - name: Apply functional login page
+        shell: pwsh
+        run: ./tools/ApplyLoginV2.ps1
+
       - name: Fetch Dear ImGui
         shell: pwsh
         run: git clone --depth 1 https://github.com/ocornut/imgui.git third_party/imgui
@@ -99,10 +103,10 @@ jobs:
             size_bytes = [int64]"${{ steps.package.outputs.size }}"
             sha256 = "${{ steps.package.outputs.sha256 }}"
             notes = @(
-              "Denser layered engine contrails",
-              "Softer particle opacity with greater overlap",
-              "Longer core development and stronger wake-to-cirrus transition",
-              "Expanded particle budgets for primary wake and secondary curtain"
+              "New asset-driven FreeFlight login page",
+              "Functional email and password fields prepared for the future account service",
+              "Working GitHub device login under the new Login With section",
+              "Denser layered contrails and improved wake-to-cirrus transition"
             )
           }
           $manifest | ConvertTo-Json -Depth 4 | Set-Content update/latest.json -Encoding utf8

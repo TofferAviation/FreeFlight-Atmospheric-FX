@@ -29,6 +29,9 @@ jobs:
           } else {
             $version = $refName.TrimStart('v')
           }
+          if ($version -notmatch '^\d+\.\d+\.\d+$') {
+            throw "Unsupported release version '$version' from ref '$refName'."
+          }
           "version=$version" >> $env:GITHUB_OUTPUT
           "tag=v$version" >> $env:GITHUB_OUTPUT
           "archive=FFAtmo-v$version-win64.zip" >> $env:GITHUB_OUTPUT
@@ -79,9 +82,15 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         shell: pwsh
         run: |
-          gh release create "${{ steps.version.outputs.tag }}" "${{ steps.version.outputs.archive }}" `
+          $tag = "${{ steps.version.outputs.tag }}"
+          $archive = "${{ steps.version.outputs.archive }}"
+          if (gh release view $tag --repo "${{ github.repository }}" 2>$null) {
+            gh release delete $tag --repo "${{ github.repository }}" --cleanup-tag --yes
+          }
+          gh release create $tag $archive `
             --repo "${{ github.repository }}" `
-            --title "Atmospheric FX ${{ steps.version.outputs.tag }}" `
+            --target "${{ github.sha }}" `
+            --title "Atmospheric FX $tag" `
             --generate-notes
 
       - name: Publish stable manifest

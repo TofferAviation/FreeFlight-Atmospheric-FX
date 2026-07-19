@@ -98,33 +98,30 @@ bool syncFxPackageToXPlane() {
     gFooter = "Atmospheric FX v" + std::string(ffatmo::app::kAppVersion) + " synced into X-Plane. Restart the simulator to reload particles.";
     return true;
 }
-
 '@
-    $text = $text.Replace($anchor, $syncCode.Replace("`n", $newline) + $anchor)
+
+    # GitHub's Windows runner gives here-strings CRLF endings. Normalize first,
+    # then convert once to the source file's existing line ending style.
+    $syncCode = ($syncCode -replace "`r`n", "`n").TrimEnd()
+    $syncCode = $syncCode -replace "`n", $newline
+    $text = $text.Replace($anchor, $syncCode + $newline + $newline + $anchor)
+    Write-Host "Inserted X-Plane asset synchronization helpers."
+} else {
+    Write-Host "X-Plane asset synchronization helpers are already present."
 }
 
-$oldConnect = @'
-void connectRoot() {
-    if (gXPlaneRoot.empty()) return;
-    std::string message;
-'@
-$newConnect = @'
-void connectRoot() {
-    if (gXPlaneRoot.empty()) return;
-    syncFxPackageToXPlane();
-    std::string message;
-'@
-$oldConnect = $oldConnect.Replace("`n", $newline)
-$newConnect = $newConnect.Replace("`n", $newline)
+$oldConnect = "void connectRoot() {${newline}    if (gXPlaneRoot.empty()) return;${newline}    std::string message;"
+$newConnect = "void connectRoot() {${newline}    if (gXPlaneRoot.empty()) return;${newline}    syncFxPackageToXPlane();${newline}    std::string message;"
 if ($text.Contains($oldConnect)) {
     $text = $text.Replace($oldConnect, $newConnect)
-} elseif (-not $text.Contains("syncFxPackageToXPlane();${newline}    std::string message;")) {
+    Write-Host "Wired automatic FX synchronization into connectRoot()."
+} elseif ($text.Contains($newConnect)) {
+    Write-Host "Automatic FX synchronization is already wired into connectRoot()."
+} else {
     throw "Could not wire automatic FX synchronization into connectRoot()."
 }
 
-$oldChoose = 'if (fs::exists(p/"Resources"/"plugins")) { gXPlaneRoot=p; connectRoot(); }'
-$newChoose = 'if (fs::exists(p/"Resources"/"plugins")) { gXPlaneRoot=p; connectRoot(); }'
-if (-not $text.Contains($newChoose)) {
+if (-not $text.Contains('if (fs::exists(p/"Resources"/"plugins")) { gXPlaneRoot=p; connectRoot(); }')) {
     throw "Could not confirm X-Plane folder connection flow."
 }
 

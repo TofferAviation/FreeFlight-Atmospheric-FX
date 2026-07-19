@@ -1,13 +1,13 @@
 {
-  "version": "0.4.8",
+  "version": "0.4.9",
   "channel": "stable",
-  "download_url": "https://github.com/TofferAviation/FreeFlight-Atmospheric-FX/releases/download/v0.4.8/FFAtmo-v0.4.8-win64.zip",
-  "size_bytes": 16668991,
-  "sha256": "56ce438ce4445ec40962e3056d9dbbba739035610e9bc8a7d3e04c433506529d",
+  "download_url": "https://github.com/TofferAviation/FreeFlight-Atmospheric-FX/releases/download/v0.4.9/FFAtmo-v0.4.9-win64.zip",
+  "size_bytes": 17703727,
+  "sha256": "cf0abcc450893bc4b453597af7d3f0f8f25c569a0448f0572e2c159dbde0e9f0",
   "notes": [
-    "Denser layered engine contrails",
-    "Softer particle opacity with greater overlap",
-    "Longer core development and stronger wake-to-cirrus transition",
-    "Expanded particle budgets for primary wake and secondary curtain"
+    "New asset-driven FreeFlight login page",
+    "Functional email and password fields prepared for the future account service",
+    "Working GitHub device login under the new Login With section",
+    "Denser layered contrails and improved wake-to-cirrus transition"
   ]
 }

@@ -6,10 +6,15 @@ if (-not (Test-Path $sourcePath)) {
     throw "Companion source not found: $sourcePath"
 }
 
-$text = Get-Content $sourcePath -Raw
+$stableBackgroundPath = "package/FFAtmo/ui/assets/backgrounds/background_atmospheric_clean.png"
+if (-not (Test-Path $stableBackgroundPath)) {
+    throw "Stable atmospheric background not found: $stableBackgroundPath"
+}
 
+$text = Get-Content $sourcePath -Raw
 $brokenBackground = 'login/backgrounds/login_background_clean.png'
 $stableBackground = 'backgrounds/background_atmospheric_clean.png'
+
 if ($text.Contains($brokenBackground)) {
     $text = $text.Replace($brokenBackground, $stableBackground)
     Write-Host "Replaced the corrupted login background with the stable atmospheric background."
@@ -39,6 +44,31 @@ if (-not (Test-Path $payloadPath)) {
 }
 
 $payload = (Get-Content $payloadPath -Raw) -replace '\s',''
-[IO.File]::WriteAllBytes($iconPath, [Convert]::FromBase64String($payload))
+if ([string]::IsNullOrWhiteSpace($payload) -or ($payload.Length % 4) -ne 0) {
+    throw "GitHub icon payload has an invalid Base64 length."
+}
+
+try {
+    $bytes = [Convert]::FromBase64String($payload)
+} catch {
+    throw "GitHub icon payload is not valid Base64: $($_.Exception.Message)"
+}
+
+if ($bytes.Length -lt 100) {
+    throw "Decoded GitHub icon payload is unexpectedly small."
+}
+
+$pngSignature = [byte[]](137,80,78,71,13,10,26,10)
+for ($i = 0; $i -lt $pngSignature.Length; ++$i) {
+    if ($bytes[$i] -ne $pngSignature[$i]) {
+        throw "Decoded GitHub icon payload is not a PNG file."
+    }
+}
+
+$iconDirectory = Split-Path -Parent $iconPath
+New-Item -ItemType Directory -Path $iconDirectory -Force | Out-Null
+$tempIconPath = "$iconPath.tmp"
+[IO.File]::WriteAllBytes($tempIconPath, $bytes)
+Move-Item $tempIconPath $iconPath -Force
 Remove-Item $payloadPath -Force
-Write-Host "Generated the supplied transparent GitHub icon at $iconPath."
+Write-Host "Generated and validated the supplied transparent GitHub icon at $iconPath."

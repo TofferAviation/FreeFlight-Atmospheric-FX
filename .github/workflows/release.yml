@@ -40,7 +40,7 @@ jobs:
           "tag=v$version" >> $env:GITHUB_OUTPUT
           "archive=FFAtmo-v$version-win64.zip" >> $env:GITHUB_OUTPUT
 
-      - name: Apply contrail realism calibration
+      - name: Apply dense contrail calibration
         shell: pwsh
         run: ./tools/ApplyContrailRealism.ps1
 
@@ -51,6 +51,20 @@ jobs:
       - name: Apply login background and GitHub icon hotfix
         shell: pwsh
         run: ./tools/ApplyLoginHotfix.ps1
+
+      - name: Apply independent effect testing controls
+        shell: pwsh
+        run: ./tools/ApplyEffectIsolationV1.ps1
+
+      - name: Validate release patches
+        shell: pwsh
+        run: |
+          $source = Get-Content "app/ImGuiCompanion.cpp" -Raw
+          if (-not $source.Contains('CONTRAILS ONLY')) { throw "Solo effect controls were not applied" }
+          if (-not $source.Contains('bool contrails=gSettings.contrailIntensity>.01f')) { throw "Overview contrail switch is still tied to the master switch" }
+          $particles = Get-Content "package/FFAtmo/assets/FFAtmo_particles.pss" -Raw
+          if (-not $particles.Contains("`t1.000000`t360.000000`t430.000000")) { throw "Dense contrail emission rate was not applied" }
+          if (-not $particles.Contains("MAX_PARTICLES 16000")) { throw "Dense contrail particle budget was not applied" }
 
       - name: Fetch Dear ImGui
         shell: pwsh
@@ -127,10 +141,10 @@ jobs:
             size_bytes = [int64]"${{ steps.package.outputs.size }}"
             sha256 = "${{ steps.package.outputs.sha256 }}"
             notes = @(
-              "Fixed the login-page background rendering",
-              "Added the supplied transparent GitHub mark to the working GitHub login button",
-              "Validated the icon payload before packaging",
-              "Made release publishing safe to rerun without duplicate-tag failures"
+              "Independent switches for engine contrails, wingtip vortices and over-wing condensation",
+              "Contrails Only, Vortices Only, Over-wing Only and All Off testing buttons",
+              "Much denser and wider engine contrail core for a continuous volumetric plume",
+              "Reduced early curtain and cirrus clutter while the core contrail is being tuned"
             )
           }
           $manifest | ConvertTo-Json -Depth 4 | Set-Content update/latest.json -Encoding utf8

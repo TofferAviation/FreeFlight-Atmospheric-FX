@@ -1,13 +1,13 @@
 {
-  "version": "0.4.12",
+  "version": "0.4.13",
   "channel": "stable",
-  "download_url": "https://github.com/TofferAviation/FreeFlight-Atmospheric-FX/releases/download/v0.4.12/FFAtmo-v0.4.12-win64.zip",
-  "size_bytes": 17707348,
-  "sha256": "2077002b26400b16963c2c795bdd9f5b792c88401cef5bfad380e9cfc32f36df",
+  "download_url": "https://github.com/TofferAviation/FreeFlight-Atmospheric-FX/releases/download/v0.4.13/FFAtmo-v0.4.13-win64.zip",
+  "size_bytes": 17713489,
+  "sha256": "e5fd537b579c0e880c46ff3f2a72d3de801fa81afe95d190f28f3e81e8b61371",
   "notes": [
-    "Independent switches for engine contrails, wingtip vortices and over-wing condensation",
-    "Contrails Only, Vortices Only, Over-wing Only and All Off testing buttons",
-    "Much denser and wider engine contrail core for a continuous volumetric plume",
-    "Reduced early curtain and cirrus clutter while the core contrail is being tuned"
+    "Automatically syncs updated particle assets into the selected X-Plane plugin folder",
+    "Writes an FFAtmo asset-version marker so the installed simulator assets can be verified",
+    "Keeps independent Contrails Only, Vortices Only and Over-wing Only testing controls",
+    "Retains the dense volumetric contrail calibration for the next in-simulator test"
   ]
 }

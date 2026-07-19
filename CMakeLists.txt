@@ -96,6 +96,7 @@ if(FFATMO_BUILD_PLUGIN)
 
     add_library(FFAtmo MODULE
         src/ParticleInstance.cpp
+        src/ParticleInstanceCompat.cpp
         src/Plugin.cpp
         src/PublishedDatarefs.cpp
         src/SimDatarefs.cpp
@@ -116,7 +117,15 @@ if(FFATMO_BUILD_PLUGIN)
         set_target_properties(FFAtmo PROPERTIES
             PREFIX "" SUFFIX ".xpl" OUTPUT_NAME "win"
             LIBRARY_OUTPUT_DIRECTORY "${FFATMO_PACKAGE_DIR}/64"
+            LIBRARY_OUTPUT_DIRECTORY_DEBUG "${FFATMO_PACKAGE_DIR}/64"
+            LIBRARY_OUTPUT_DIRECTORY_RELEASE "${FFATMO_PACKAGE_DIR}/64"
+            LIBRARY_OUTPUT_DIRECTORY_RELWITHDEBINFO "${FFATMO_PACKAGE_DIR}/64"
+            LIBRARY_OUTPUT_DIRECTORY_MINSIZEREL "${FFATMO_PACKAGE_DIR}/64"
             RUNTIME_OUTPUT_DIRECTORY "${FFATMO_PACKAGE_DIR}/64"
+            RUNTIME_OUTPUT_DIRECTORY_DEBUG "${FFATMO_PACKAGE_DIR}/64"
+            RUNTIME_OUTPUT_DIRECTORY_RELEASE "${FFATMO_PACKAGE_DIR}/64"
+            RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO "${FFATMO_PACKAGE_DIR}/64"
+            RUNTIME_OUTPUT_DIRECTORY_MINSIZEREL "${FFATMO_PACKAGE_DIR}/64"
         )
     elseif(APPLE)
         target_compile_definitions(FFAtmo PRIVATE APL=1)

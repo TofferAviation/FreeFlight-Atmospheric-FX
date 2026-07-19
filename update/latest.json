@@ -1,9 +1,9 @@
 {
-  "version": "0.4.9",
+  "version": "0.4.10",
   "channel": "stable",
-  "download_url": "https://github.com/TofferAviation/FreeFlight-Atmospheric-FX/releases/download/v0.4.9/FFAtmo-v0.4.9-win64.zip",
-  "size_bytes": 17703727,
-  "sha256": "cf0abcc450893bc4b453597af7d3f0f8f25c569a0448f0572e2c159dbde0e9f0",
+  "download_url": "https://github.com/TofferAviation/FreeFlight-Atmospheric-FX/releases/download/v0.4.10/FFAtmo-v0.4.10-win64.zip",
+  "size_bytes": 17703739,
+  "sha256": "dee233138b35fa3d4241d72db45113e4a467505ea2e7d8f5427510cdf957bd7e",
   "notes": [
     "New asset-driven FreeFlight login page",
     "Functional email and password fields prepared for the future account service",

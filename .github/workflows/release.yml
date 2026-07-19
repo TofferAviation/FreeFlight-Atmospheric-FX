@@ -91,7 +91,7 @@ jobs:
           "sha256=$hash" >> $env:GITHUB_OUTPUT
           "size=$size" >> $env:GITHUB_OUTPUT
 
-      - name: Publish GitHub release
+      - name: Publish or replace GitHub release asset
         env:
           GH_TOKEN: ${{ github.token }}
         shell: pwsh
@@ -99,13 +99,18 @@ jobs:
           $tag = "${{ steps.version.outputs.tag }}"
           $archive = "${{ steps.version.outputs.archive }}"
           if (gh release view $tag --repo "${{ github.repository }}" 2>$null) {
-            gh release delete $tag --repo "${{ github.repository }}" --cleanup-tag --yes
+            gh release upload $tag $archive --repo "${{ github.repository }}" --clobber
+            gh release edit $tag `
+              --repo "${{ github.repository }}" `
+              --title "Atmospheric FX $tag" `
+              --target "${{ github.sha }}"
+          } else {
+            gh release create $tag $archive `
+              --repo "${{ github.repository }}" `
+              --target "${{ github.sha }}" `
+              --title "Atmospheric FX $tag" `
+              --generate-notes
           }
-          gh release create $tag $archive `
-            --repo "${{ github.repository }}" `
-            --target "${{ github.sha }}" `
-            --title "Atmospheric FX $tag" `
-            --generate-notes
 
       - name: Publish stable manifest
         shell: pwsh
@@ -122,10 +127,10 @@ jobs:
             size_bytes = [int64]"${{ steps.package.outputs.size }}"
             sha256 = "${{ steps.package.outputs.sha256 }}"
             notes = @(
-              "Fixed the corrupted login-page background",
-              "Replaced the temporary GH badge with the supplied GitHub icon",
-              "Kept the standard FreeFlight login shell and working GitHub device login",
-              "Includes the denser layered contrail realism calibration"
+              "Fixed the login-page background rendering",
+              "Added the supplied transparent GitHub mark to the working GitHub login button",
+              "Validated the icon payload before packaging",
+              "Made release publishing safe to rerun without duplicate-tag failures"
             )
           }
           $manifest | ConvertTo-Json -Depth 4 | Set-Content update/latest.json -Encoding utf8

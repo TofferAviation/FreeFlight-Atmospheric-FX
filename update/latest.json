@@ -1,13 +1,13 @@
 {
-  "version": "0.4.11",
+  "version": "0.4.12",
   "channel": "stable",
-  "download_url": "https://github.com/TofferAviation/FreeFlight-Atmospheric-FX/releases/download/v0.4.11/FFAtmo-v0.4.11-win64.zip",
-  "size_bytes": 17707026,
-  "sha256": "d3ddbbf8018b2672dacf2b09c0c07a2f16fc04662c7c44e27a4077be9e7a5c7c",
+  "download_url": "https://github.com/TofferAviation/FreeFlight-Atmospheric-FX/releases/download/v0.4.12/FFAtmo-v0.4.12-win64.zip",
+  "size_bytes": 17707348,
+  "sha256": "2077002b26400b16963c2c795bdd9f5b792c88401cef5bfad380e9cfc32f36df",
   "notes": [
-    "Fixed the login-page background rendering",
-    "Added the supplied transparent GitHub mark to the working GitHub login button",
-    "Validated the icon payload before packaging",
-    "Made release publishing safe to rerun without duplicate-tag failures"
+    "Independent switches for engine contrails, wingtip vortices and over-wing condensation",
+    "Contrails Only, Vortices Only, Over-wing Only and All Off testing buttons",
+    "Much denser and wider engine contrail core for a continuous volumetric plume",
+    "Reduced early curtain and cirrus clutter while the core contrail is being tuned"
   ]
 }

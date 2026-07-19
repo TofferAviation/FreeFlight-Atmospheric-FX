@@ -56,12 +56,18 @@ jobs:
         shell: pwsh
         run: ./tools/ApplyEffectIsolationV1.ps1
 
+      - name: Apply X-Plane FX asset synchronization
+        shell: pwsh
+        run: ./tools/ApplyXPlaneAssetSyncV1.ps1
+
       - name: Validate release patches
         shell: pwsh
         run: |
           $source = Get-Content "app/ImGuiCompanion.cpp" -Raw
           if (-not $source.Contains('CONTRAILS ONLY')) { throw "Solo effect controls were not applied" }
           if (-not $source.Contains('bool contrails=gSettings.contrailIntensity>.01f')) { throw "Overview contrail switch is still tied to the master switch" }
+          if (-not $source.Contains('bool syncFxPackageToXPlane()')) { throw "X-Plane FX synchronization was not applied" }
+          if (-not $source.Contains('FFAtmo.asset-version.txt')) { throw "FX deployment marker was not added" }
           $particles = Get-Content "package/FFAtmo/assets/FFAtmo_particles.pss" -Raw
           if (-not $particles.Contains("`t1.000000`t360.000000`t430.000000")) { throw "Dense contrail emission rate was not applied" }
           if (-not $particles.Contains("MAX_PARTICLES 16000")) { throw "Dense contrail particle budget was not applied" }
@@ -141,10 +147,10 @@ jobs:
             size_bytes = [int64]"${{ steps.package.outputs.size }}"
             sha256 = "${{ steps.package.outputs.sha256 }}"
             notes = @(
-              "Independent switches for engine contrails, wingtip vortices and over-wing condensation",
-              "Contrails Only, Vortices Only, Over-wing Only and All Off testing buttons",
-              "Much denser and wider engine contrail core for a continuous volumetric plume",
-              "Reduced early curtain and cirrus clutter while the core contrail is being tuned"
+              "Automatically syncs updated particle assets into the selected X-Plane plugin folder",
+              "Writes an FFAtmo asset-version marker so the installed simulator assets can be verified",
+              "Keeps independent Contrails Only, Vortices Only and Over-wing Only testing controls",
+              "Retains the dense volumetric contrail calibration for the next in-simulator test"
             )
           }
           $manifest | ConvertTo-Json -Depth 4 | Set-Content update/latest.json -Encoding utf8

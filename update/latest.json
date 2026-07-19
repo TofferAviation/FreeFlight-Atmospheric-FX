@@ -2,8 +2,8 @@
   "version": "0.4.16",
   "channel": "stable",
   "download_url": "https://github.com/TofferAviation/FreeFlight-Atmospheric-FX/releases/download/v0.4.16/FFAtmo-v0.4.16-win64.zip",
-  "size_bytes": 17713527,
-  "sha256": "4137eed3b57b79318de7cf151470773ef9c4d84ececab8d52dd0af4f16157f3b",
+  "size_bytes": 17713526,
+  "sha256": "9019196fda9b0299ba54e3f35f34c1a85c7b15bafe46ccc3be13e487ec829ab6",
   "notes": [
     "Side-vortex particles now contract as they are entrained into the wake",
     "Higher-rate smaller vortex particles replace the dotted bead appearance",

@@ -1,9 +1,9 @@
 {
-  "version": "0.4.13",
+  "version": "0.4.14",
   "channel": "stable",
-  "download_url": "https://github.com/TofferAviation/FreeFlight-Atmospheric-FX/releases/download/v0.4.13/FFAtmo-v0.4.13-win64.zip",
-  "size_bytes": 17713489,
-  "sha256": "548e51cc24da957239d0b89ba9ae9232004d9b8e6f81753bdded7ccd518027e2",
+  "download_url": "https://github.com/TofferAviation/FreeFlight-Atmospheric-FX/releases/download/v0.4.14/FFAtmo-v0.4.14-win64.zip",
+  "size_bytes": 17713491,
+  "sha256": "db7228faa72285dd8656e630522228bd849f156e40b271f4d990cbe2bf9921e7",
   "notes": [
     "Automatically syncs updated particle assets into the selected X-Plane plugin folder",
     "Writes an FFAtmo asset-version marker so the installed simulator assets can be verified",

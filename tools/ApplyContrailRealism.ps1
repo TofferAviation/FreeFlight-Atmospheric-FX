@@ -26,7 +26,6 @@ function Replace-Scoped {
     $block = $match.Value
     $oldCount = ([regex]::Matches($block, [regex]::Escape($Old))).Count
     $newCount = ([regex]::Matches($block, [regex]::Escape($New))).Count
-
     if ($oldCount -eq 0) {
         if ($newCount -eq 1) {
             Write-Host "Calibration '$Label' is already applied in $ScopeLabel."
@@ -106,103 +105,99 @@ foreach ($path in $Paths) {
     $text = Get-Content $path -Raw
     $nl = if ($text.Contains("`r`n")) { "`r`n" } else { "`n" }
 
-    # Dense engine core, but no oversized late-life discs or manoeuvre hooks.
+    # The young engine cores must stay narrower than the 9.0 m engine spacing.
     $text = Replace-InParticle $text "ffatmo_contrail_core" `
-        " MAX_PARTICLES 6000" " MAX_PARTICLES 16000" "core particle budget"
+        " MAX_PARTICLES 6000" " MAX_PARTICLES 12000" "core particle budget"
     $text = Replace-InParticle $text "ffatmo_contrail_core" `
         ("`t0.000000`t1.200000${nl}`t0.180000`t2.400000${nl}`t1.000000`t6.000000") `
-        ("`t0.000000`t2.200000${nl}`t0.120000`t5.500000${nl}`t0.350000`t7.800000${nl}`t0.620000`t6.000000${nl}`t1.000000`t2.000000") `
-        "bounded core volume"
+        ("`t0.000000`t0.800000${nl}`t0.140000`t1.250000${nl}`t0.420000`t1.650000${nl}`t0.720000`t1.150000${nl}`t1.000000`t0.650000") `
+        "narrow separated core size"
     $text = Replace-InParticle $text "ffatmo_contrail_core" `
         ("`t0.000000`t0.000000${nl}`t0.050000`t0.180000${nl}`t0.650000`t0.120000${nl}`t1.000000`t0.000000") `
-        ("`t0.000000`t0.000000${nl}`t0.030000`t0.100000${nl}`t0.130000`t0.200000${nl}`t0.450000`t0.160000${nl}`t0.750000`t0.070000${nl}`t1.000000`t0.000000") `
-        "soft continuous core opacity"
+        ("`t0.000000`t0.000000${nl}`t0.035000`t0.090000${nl}`t0.140000`t0.180000${nl}`t0.500000`t0.150000${nl}`t0.800000`t0.050000${nl}`t1.000000`t0.000000") `
+        "soft separated core opacity"
 
-    # Primary wake briefly rolls up, then contracts as it is captured instead of growing forever.
+    # These particles are now short wisps emitted by moving wake parcels, not giant self-propelled loops.
     $text = Replace-InParticle $text "ffatmo_primary_wake" `
-        " MAX_PARTICLES 8000" " MAX_PARTICLES 11000" "primary wake budget"
+        " MAX_PARTICLES 8000" " MAX_PARTICLES 10000" "primary wake budget"
     $text = Replace-InParticle $text "ffatmo_primary_wake" `
         ("`t0.000000`t1.500000${nl}`t0.180000`t4.000000${nl}`t0.520000`t10.000000${nl}`t1.000000`t20.000000") `
-        ("`t0.000000`t5.500000${nl}`t0.120000`t8.000000${nl}`t0.300000`t6.500000${nl}`t0.580000`t3.500000${nl}`t0.820000`t1.600000${nl}`t1.000000`t0.500000") `
-        "contracting primary wake size"
+        ("`t0.000000`t0.900000${nl}`t0.160000`t1.700000${nl}`t0.420000`t2.200000${nl}`t0.720000`t1.150000${nl}`t1.000000`t0.350000") `
+        "compact solver wake size"
     $text = Replace-InParticle $text "ffatmo_primary_wake" `
         ("`t0.000000`t0.000000${nl}`t0.060000`t0.000000${nl}`t0.160000`t0.180000${nl}`t0.300000`t0.280000${nl}`t0.650000`t0.100000${nl}`t1.000000`t0.000000") `
-        ("`t0.000000`t0.000000${nl}`t0.040000`t0.080000${nl}`t0.120000`t0.180000${nl}`t0.300000`t0.220000${nl}`t0.550000`t0.110000${nl}`t0.800000`t0.040000${nl}`t1.000000`t0.000000") `
-        "primary wake fade"
+        ("`t0.000000`t0.000000${nl}`t0.040000`t0.060000${nl}`t0.140000`t0.150000${nl}`t0.360000`t0.180000${nl}`t0.680000`t0.060000${nl}`t1.000000`t0.000000") `
+        "compact solver wake fade"
 
-    # Wingtip vortex wisps now begin compact and shrink as they are entrained.
     $text = Replace-InParticle $text "ffatmo_wingtip_vortex" `
-        " MAX_PARTICLES 4000" " MAX_PARTICLES 8000" "wingtip vortex budget"
+        " MAX_PARTICLES 4000" " MAX_PARTICLES 6000" "wingtip vortex budget"
     $text = Replace-InParticle $text "ffatmo_wingtip_vortex" `
         ("`t0.000000`t0.250000${nl}`t0.250000`t2.500000${nl}`t0.650000`t8.000000${nl}`t1.000000`t18.000000") `
-        ("`t0.000000`t4.000000${nl}`t0.120000`t4.600000${nl}`t0.350000`t3.200000${nl}`t0.650000`t1.800000${nl}`t0.850000`t0.800000${nl}`t1.000000`t0.250000") `
-        "contracting wingtip vortex size"
+        ("`t0.000000`t0.750000${nl}`t0.180000`t1.350000${nl}`t0.480000`t1.600000${nl}`t0.760000`t0.700000${nl}`t1.000000`t0.200000") `
+        "small wingtip vortex size"
     $text = Replace-InParticle $text "ffatmo_wingtip_vortex" `
         ("`t0.000000`t0.220000${nl}`t0.220000`t0.135000${nl}`t0.700000`t0.045000${nl}`t1.000000`t0.000000") `
-        ("`t0.000000`t0.000000${nl}`t0.040000`t0.180000${nl}`t0.180000`t0.160000${nl}`t0.500000`t0.090000${nl}`t0.780000`t0.030000${nl}`t1.000000`t0.000000") `
-        "wingtip vortex fade"
-
-    $text = Replace-InParticle $text "ffatmo_secondary_curtain" `
-        " MAX_PARTICLES 12000" " MAX_PARTICLES 15000" "secondary curtain budget"
+        ("`t0.000000`t0.000000${nl}`t0.050000`t0.130000${nl}`t0.250000`t0.110000${nl}`t0.650000`t0.035000${nl}`t1.000000`t0.000000") `
+        "small wingtip vortex fade"
 
     foreach ($emitter in @("FFATMO_ENGINE_LEFT", "FFATMO_ENGINE_RIGHT")) {
         $text = Replace-InSubEmitter $text $emitter 0 `
             "`t1.000000`t145.000000`t165.000000" `
-            "`t1.000000`t360.000000`t430.000000" `
+            "`t1.000000`t260.000000`t320.000000" `
             "engine core density"
         $text = Replace-InSubEmitter $text $emitter 0 `
             "`t1.000000`t0.650000`t1.000000" `
-            "`t1.000000`t1.250000`t2.100000" `
+            "`t1.000000`t0.550000`t0.800000" `
             "engine core size variation"
         $text = Replace-InSubEmitter $text $emitter 0 `
             "`t1.000000`t0.800000`t1.000000" `
-            "`t1.000000`t0.620000`t0.850000" `
+            "`t1.000000`t0.480000`t0.680000" `
             "engine core alpha variation"
         $text = Replace-InSubEmitter $text $emitter 0 `
             ("`t0.000000`t8.000000`t12.000000${nl}`t1.000000`t8.000000`t12.000000") `
-            ("`t0.000000`t12.000000`t18.000000${nl}`t1.000000`t12.000000`t18.000000") `
-            "engine core lifetime"
+            ("`t0.000000`t4.500000`t6.500000${nl}`t1.000000`t4.500000`t6.500000") `
+            "young core lifetime"
 
         $text = Replace-InSubEmitter $text $emitter 4 `
             "`t1.000000`t10.000000`t14.000000" `
-            "`t1.000000`t24.000000`t34.000000" `
-            "continuous primary wake density"
+            "`t1.000000`t12.000000`t18.000000" `
+            "wake parcel density"
         $text = Replace-InSubEmitter $text $emitter 4 `
             ("`t0.000000`t1.200000`t1.800000${nl}`t1.000000`t1.200000`t1.800000") `
-            ("`t0.000000`t0.450000`t0.900000${nl}`t1.000000`t0.450000`t0.900000") `
-            "tighter wake capture speed"
+            ("`t0.000000`t0.050000`t0.200000${nl}`t1.000000`t0.050000`t0.200000") `
+            "wake parcel residual speed"
         $text = Replace-InSubEmitter $text $emitter 4 `
             ("`t0.000000`t0.080000`t0.220000${nl}`t1.000000`t0.080000`t0.220000") `
-            ("`t0.000000`t0.030000`t0.100000${nl}`t1.000000`t0.030000`t0.100000") `
-            "tighter wake capture radius"
+            ("`t0.000000`t0.010000`t0.040000${nl}`t1.000000`t0.010000`t0.040000") `
+            "wake parcel spawn radius"
 
         $text = Replace-InSubEmitter $text $emitter 5 `
             "`t1.000000`t6.000000`t9.000000" `
-            "`t1.000000`t4.000000`t6.000000" `
+            "`t1.000000`t2.000000`t3.000000" `
             "secondary curtain density"
         $text = Replace-InSubEmitter $text $emitter 1 `
             "`t1.000000`t7.000000`t11.000000" `
-            "`t1.000000`t2.000000`t4.000000" `
+            "`t1.000000`t1.000000`t2.000000" `
             "cirrus transition density"
     }
 
     $text = Replace-InSubEmitter $text "FFATMO_WING_VORTEX" 3 `
         "`t1.000000`t18.000000`t28.000000" `
-        "`t1.000000`t90.000000`t130.000000" `
-        "continuous wingtip vortex rate"
+        "`t1.000000`t55.000000`t80.000000" `
+        "continuous small wingtip vortex rate"
     $text = Replace-InSubEmitter $text "FFATMO_WING_VORTEX" 3 `
         "`t1.000000`t0.700000`t1.000000" `
-        "`t1.000000`t0.900000`t1.200000" `
+        "`t1.000000`t0.500000`t0.750000" `
         "wingtip vortex size variation"
     $text = Replace-InSubEmitter $text "FFATMO_WING_VORTEX" 3 `
         "`t1.000000`t0.650000`t1.000000" `
-        "`t1.000000`t0.350000`t0.550000" `
+        "`t1.000000`t0.280000`t0.450000" `
         "wingtip vortex alpha variation"
     $text = Replace-InSubEmitter $text "FFATMO_WING_VORTEX" 3 `
         ("`t0.000000`t0.000000`t0.000000${nl}`t1.000000`t7.000000`t14.000000") `
-        ("`t0.000000`t0.000000`t0.000000${nl}`t1.000000`t5.000000`t9.000000") `
+        ("`t0.000000`t0.000000`t0.000000${nl}`t1.000000`t3.000000`t5.000000") `
         "wingtip vortex lifetime"
 
     Set-Content -Path $path -Value $text -Encoding utf8 -NoNewline
-    Write-Host "Applied contracting vortex-capture contrail calibration to $path"
+    Write-Host "Applied narrow-core calibration for the age-based wake solver to $path"
 }

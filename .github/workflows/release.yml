@@ -40,7 +40,7 @@ jobs:
           "tag=v$version" >> $env:GITHUB_OUTPUT
           "archive=FFAtmo-v$version-win64.zip" >> $env:GITHUB_OUTPUT
 
-      - name: Apply dense contrail calibration
+      - name: Apply contracting vortex-capture calibration
         shell: pwsh
         run: ./tools/ApplyContrailRealism.ps1
 
@@ -70,6 +70,9 @@ jobs:
           if (-not $source.Contains('FFAtmo.asset-version.txt')) { throw "FX deployment marker was not added" }
           $particles = Get-Content "package/FFAtmo/assets/FFAtmo_particles.pss" -Raw
           if (-not $particles.Contains("`t1.000000`t360.000000`t430.000000")) { throw "Dense contrail emission rate was not applied" }
+          if (-not $particles.Contains("`t1.000000`t90.000000`t130.000000")) { throw "Continuous wingtip vortex rate was not applied" }
+          if (-not $particles.Contains("`t1.000000`t24.000000`t34.000000")) { throw "Primary wake density was not applied" }
+          if (-not $particles.Contains("`t1.000000`t0.250000")) { throw "Contracting vortex size curve was not applied" }
           if (-not $particles.Contains("MAX_PARTICLES 16000")) { throw "Dense contrail particle budget was not applied" }
 
       - name: Fetch Dear ImGui
@@ -147,10 +150,11 @@ jobs:
             size_bytes = [int64]"${{ steps.package.outputs.size }}"
             sha256 = "${{ steps.package.outputs.sha256 }}"
             notes = @(
-              "Automatically syncs updated particle assets into the selected X-Plane plugin folder",
-              "Writes an FFAtmo asset-version marker so the installed simulator assets can be verified",
-              "Keeps independent Contrails Only, Vortices Only and Over-wing Only testing controls",
-              "Retains the dense volumetric contrail calibration for the next in-simulator test"
+              "Side-vortex particles now contract as they are entrained into the wake",
+              "Higher-rate smaller vortex particles replace the dotted bead appearance",
+              "Primary wake briefly rolls up, then tightens and fades instead of growing into large blobs",
+              "Engine contrails remain dense but no longer expand into oversized late-life discs",
+              "Updated particle assets continue to sync automatically into the selected X-Plane plugin folder"
             )
           }
           $manifest | ConvertTo-Json -Depth 4 | Set-Content update/latest.json -Encoding utf8

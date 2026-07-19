@@ -1,13 +1,13 @@
 {
-  "version": "0.4.10",
+  "version": "0.4.11",
   "channel": "stable",
-  "download_url": "https://github.com/TofferAviation/FreeFlight-Atmospheric-FX/releases/download/v0.4.10/FFAtmo-v0.4.10-win64.zip",
-  "size_bytes": 17703739,
-  "sha256": "dee233138b35fa3d4241d72db45113e4a467505ea2e7d8f5427510cdf957bd7e",
+  "download_url": "https://github.com/TofferAviation/FreeFlight-Atmospheric-FX/releases/download/v0.4.11/FFAtmo-v0.4.11-win64.zip",
+  "size_bytes": 17707026,
+  "sha256": "d3ddbbf8018b2672dacf2b09c0c07a2f16fc04662c7c44e27a4077be9e7a5c7c",
   "notes": [
-    "New asset-driven FreeFlight login page",
-    "Functional email and password fields prepared for the future account service",
-    "Working GitHub device login under the new Login With section",
-    "Denser layered contrails and improved wake-to-cirrus transition"
+    "Fixed the login-page background rendering",
+    "Added the supplied transparent GitHub mark to the working GitHub login button",
+    "Validated the icon payload before packaging",
+    "Made release publishing safe to rerun without duplicate-tag failures"
   ]
 }

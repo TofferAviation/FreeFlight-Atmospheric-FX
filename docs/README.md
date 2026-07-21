@@ -23,6 +23,8 @@ This directory is the authoritative design baseline for the next-generation Atmo
 - [THREADING_MODEL.md](THREADING_MODEL.md) — thread ownership, synchronization, and frame safety.
 - [PERFORMANCE_BUDGETS.md](PERFORMANCE_BUDGETS.md) — CPU, GPU, memory, and scalability targets.
 - [REPLAY_SYSTEM_SPEC.md](REPLAY_SYSTEM_SPEC.md) — deterministic recording, replay, regression, and diagnostics design.
+- [DATAREF_CATALOGUE.md](DATAREF_CATALOGUE.md) — authoritative catalogue rules and implementation gate.
+- [DATAREF_SOURCE_INVENTORY.md](DATAREF_SOURCE_INVENTORY.md) — first source pass from the supplied X-Plane `DataRefs.txt`; runtime validation is still required.
 - [DEVELOPMENT_ROADMAP.md](DEVELOPMENT_ROADMAP.md) — milestones, exit criteria, and technical risk gates.
 - [adr/](adr/) — Architecture Decision Records.
 

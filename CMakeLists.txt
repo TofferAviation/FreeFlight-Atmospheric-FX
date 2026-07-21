@@ -5,12 +5,14 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(FFATMO_APP_VERSION "${PROJECT_VERSION}" CACHE STRING "Version reported by the companion and updater")
+set(FFATMO_GIT_REVISION "unknown" CACHE STRING "Git revision embedded in diagnostics builds")
 
 option(FFATMO_BUILD_PLUGIN "Build the X-Plane plugin" ON)
 option(FFATMO_BUILD_TESTS "Build the platform-independent tests" ON)
 option(FFATMO_BUILD_IMGUI_PANEL "Compile the six-page ImGui panel source" OFF)
 option(FFATMO_BUILD_COMPANION "Build the native Windows companion application" ON)
 option(FFATMO_BUILD_GEOMETRY_DEBUG "Build the standalone ACF geometry-debug plugin" OFF)
+option(FFATMO_BUILD_RECORDER_DEBUG "Build the standalone simulator snapshot recorder" OFF)
 
 set(XPLANE_SDK "" CACHE PATH "Path to the extracted X-Plane SDK folder")
 set(IMGUI_DIR "" CACHE PATH "Path to Dear ImGui (contains imgui.h)")
@@ -23,6 +25,7 @@ add_library(ffatmo_core STATIC
     src/CompanionBridge.cpp
     src/Settings.cpp
     src/acf/AcfGeometry.cpp
+    src/diagnostics/ReplayFile.cpp
 )
 target_include_directories(ffatmo_core PUBLIC src)
 target_link_libraries(ffatmo_core PUBLIC Threads::Threads)
@@ -88,6 +91,10 @@ if(FFATMO_BUILD_TESTS)
     add_executable(ffatmo_acf_tests tests/AcfParserTests.cpp)
     target_link_libraries(ffatmo_acf_tests PRIVATE ffatmo_core)
     add_test(NAME ffatmo_acf_tests COMMAND ffatmo_acf_tests)
+
+    add_executable(ffatmo_replay_tests tests/ReplayTests.cpp)
+    target_link_libraries(ffatmo_replay_tests PRIVATE ffatmo_core)
+    add_test(NAME ffatmo_replay_tests COMMAND ffatmo_replay_tests)
 endif()
 
 if(FFATMO_BUILD_IMGUI_PANEL)
@@ -99,7 +106,7 @@ if(FFATMO_BUILD_IMGUI_PANEL)
     target_link_libraries(ffatmo_imgui_panel PUBLIC ffatmo_core)
 endif()
 
-if(FFATMO_BUILD_PLUGIN OR FFATMO_BUILD_GEOMETRY_DEBUG)
+if(FFATMO_BUILD_PLUGIN OR FFATMO_BUILD_GEOMETRY_DEBUG OR FFATMO_BUILD_RECORDER_DEBUG)
     if(NOT EXISTS "${XPLANE_SDK}/CHeaders/XPLM/XPLMPlugin.h")
         message(FATAL_ERROR "Set XPLANE_SDK to the SDK folder containing CHeaders and Libraries")
     endif()
@@ -113,15 +120,11 @@ if(FFATMO_BUILD_PLUGIN)
         src/PublishedDatarefs.cpp
         src/SimDatarefs.cpp
     )
-    target_include_directories(FFAtmo PRIVATE
-        src
-        "${XPLANE_SDK}/CHeaders/XPLM"
-    )
+    target_include_directories(FFAtmo PRIVATE src "${XPLANE_SDK}/CHeaders/XPLM")
     target_link_libraries(FFAtmo PRIVATE ffatmo_core)
     target_compile_definitions(FFAtmo PRIVATE
         XPLM400=1 XPLM303=1 XPLM302=1 XPLM301=1 XPLM300=1 XPLM210=1 XPLM200=1 XPLM_64=1
     )
-
     set(FFATMO_PACKAGE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/package/FFAtmo")
     if(WIN32)
         target_compile_definitions(FFAtmo PRIVATE IBM=1 NOMINMAX _CRT_SECURE_NO_WARNINGS)
@@ -141,16 +144,12 @@ if(FFATMO_BUILD_PLUGIN)
         )
     elseif(APPLE)
         target_compile_definitions(FFAtmo PRIVATE APL=1)
-        set_target_properties(FFAtmo PROPERTIES
-            PREFIX "" SUFFIX ".xpl" OUTPUT_NAME "mac"
-            LIBRARY_OUTPUT_DIRECTORY "${FFATMO_PACKAGE_DIR}/64"
-        )
+        set_target_properties(FFAtmo PROPERTIES PREFIX "" SUFFIX ".xpl" OUTPUT_NAME "mac"
+            LIBRARY_OUTPUT_DIRECTORY "${FFATMO_PACKAGE_DIR}/64")
     else()
         target_compile_definitions(FFAtmo PRIVATE LIN=1)
-        set_target_properties(FFAtmo PROPERTIES
-            PREFIX "" SUFFIX ".xpl" OUTPUT_NAME "lin"
-            LIBRARY_OUTPUT_DIRECTORY "${FFATMO_PACKAGE_DIR}/64"
-        )
+        set_target_properties(FFAtmo PROPERTIES PREFIX "" SUFFIX ".xpl" OUTPUT_NAME "lin"
+            LIBRARY_OUTPUT_DIRECTORY "${FFATMO_PACKAGE_DIR}/64")
     endif()
 endif()
 
@@ -159,22 +158,15 @@ if(FFATMO_BUILD_GEOMETRY_DEBUG)
         src/GeometryDebugPlugin.cpp
         src/GeometryDebugOverlay.cpp
     )
-    target_include_directories(FFAtmoEngineDebug PRIVATE
-        src
-        "${XPLANE_SDK}/CHeaders/XPLM"
-    )
+    target_include_directories(FFAtmoEngineDebug PRIVATE src "${XPLANE_SDK}/CHeaders/XPLM")
     target_link_libraries(FFAtmoEngineDebug PRIVATE ffatmo_core)
     target_compile_definitions(FFAtmoEngineDebug PRIVATE
         XPLM400=1 XPLM303=1 XPLM302=1 XPLM301=1 XPLM300=1 XPLM210=1 XPLM200=1 XPLM_64=1
     )
-
     set(FFATMO_DEBUG_PACKAGE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/package/FFAtmoEngineDebug")
     if(WIN32)
         target_compile_definitions(FFAtmoEngineDebug PRIVATE IBM=1 NOMINMAX _CRT_SECURE_NO_WARNINGS)
-        target_link_libraries(FFAtmoEngineDebug PRIVATE
-            "${XPLANE_SDK}/Libraries/Win/XPLM_64.lib"
-            opengl32
-        )
+        target_link_libraries(FFAtmoEngineDebug PRIVATE "${XPLANE_SDK}/Libraries/Win/XPLM_64.lib" opengl32)
         set_target_properties(FFAtmoEngineDebug PROPERTIES
             PREFIX "" SUFFIX ".xpl" OUTPUT_NAME "win"
             LIBRARY_OUTPUT_DIRECTORY "${FFATMO_DEBUG_PACKAGE_DIR}/64"
@@ -192,16 +184,52 @@ if(FFATMO_BUILD_GEOMETRY_DEBUG)
         target_compile_definitions(FFAtmoEngineDebug PRIVATE APL=1)
         find_library(OPENGL_FRAMEWORK OpenGL REQUIRED)
         target_link_libraries(FFAtmoEngineDebug PRIVATE ${OPENGL_FRAMEWORK})
-        set_target_properties(FFAtmoEngineDebug PROPERTIES
-            PREFIX "" SUFFIX ".xpl" OUTPUT_NAME "mac"
-            LIBRARY_OUTPUT_DIRECTORY "${FFATMO_DEBUG_PACKAGE_DIR}/64"
-        )
+        set_target_properties(FFAtmoEngineDebug PROPERTIES PREFIX "" SUFFIX ".xpl" OUTPUT_NAME "mac"
+            LIBRARY_OUTPUT_DIRECTORY "${FFATMO_DEBUG_PACKAGE_DIR}/64")
     else()
         target_compile_definitions(FFAtmoEngineDebug PRIVATE LIN=1)
         target_link_libraries(FFAtmoEngineDebug PRIVATE GL)
-        set_target_properties(FFAtmoEngineDebug PROPERTIES
-            PREFIX "" SUFFIX ".xpl" OUTPUT_NAME "lin"
-            LIBRARY_OUTPUT_DIRECTORY "${FFATMO_DEBUG_PACKAGE_DIR}/64"
+        set_target_properties(FFAtmoEngineDebug PROPERTIES PREFIX "" SUFFIX ".xpl" OUTPUT_NAME "lin"
+            LIBRARY_OUTPUT_DIRECTORY "${FFATMO_DEBUG_PACKAGE_DIR}/64")
+    endif()
+endif()
+
+if(FFATMO_BUILD_RECORDER_DEBUG)
+    add_library(FFAtmoEngineRecorder MODULE
+        src/RecorderDebugPlugin.cpp
+        src/host/XPlaneSnapshotSource.cpp
+    )
+    target_include_directories(FFAtmoEngineRecorder PRIVATE src "${XPLANE_SDK}/CHeaders/XPLM")
+    target_link_libraries(FFAtmoEngineRecorder PRIVATE ffatmo_core)
+    target_compile_definitions(FFAtmoEngineRecorder PRIVATE
+        XPLM400=1 XPLM303=1 XPLM302=1 XPLM301=1 XPLM300=1 XPLM210=1 XPLM200=1 XPLM_64=1
+        FFATMO_RECORDER_BUILD="engine-v1-recorder-v1"
+        FFATMO_GIT_REVISION="${FFATMO_GIT_REVISION}"
+    )
+    set(FFATMO_RECORDER_PACKAGE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/package/FFAtmoEngineRecorder")
+    if(WIN32)
+        target_compile_definitions(FFAtmoEngineRecorder PRIVATE IBM=1 NOMINMAX _CRT_SECURE_NO_WARNINGS)
+        target_link_libraries(FFAtmoEngineRecorder PRIVATE "${XPLANE_SDK}/Libraries/Win/XPLM_64.lib")
+        set_target_properties(FFAtmoEngineRecorder PROPERTIES
+            PREFIX "" SUFFIX ".xpl" OUTPUT_NAME "win"
+            LIBRARY_OUTPUT_DIRECTORY "${FFATMO_RECORDER_PACKAGE_DIR}/64"
+            LIBRARY_OUTPUT_DIRECTORY_DEBUG "${FFATMO_RECORDER_PACKAGE_DIR}/64"
+            LIBRARY_OUTPUT_DIRECTORY_RELEASE "${FFATMO_RECORDER_PACKAGE_DIR}/64"
+            LIBRARY_OUTPUT_DIRECTORY_RELWITHDEBINFO "${FFATMO_RECORDER_PACKAGE_DIR}/64"
+            LIBRARY_OUTPUT_DIRECTORY_MINSIZEREL "${FFATMO_RECORDER_PACKAGE_DIR}/64"
+            RUNTIME_OUTPUT_DIRECTORY "${FFATMO_RECORDER_PACKAGE_DIR}/64"
+            RUNTIME_OUTPUT_DIRECTORY_DEBUG "${FFATMO_RECORDER_PACKAGE_DIR}/64"
+            RUNTIME_OUTPUT_DIRECTORY_RELEASE "${FFATMO_RECORDER_PACKAGE_DIR}/64"
+            RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO "${FFATMO_RECORDER_PACKAGE_DIR}/64"
+            RUNTIME_OUTPUT_DIRECTORY_MINSIZEREL "${FFATMO_RECORDER_PACKAGE_DIR}/64"
         )
+    elseif(APPLE)
+        target_compile_definitions(FFAtmoEngineRecorder PRIVATE APL=1)
+        set_target_properties(FFAtmoEngineRecorder PROPERTIES PREFIX "" SUFFIX ".xpl" OUTPUT_NAME "mac"
+            LIBRARY_OUTPUT_DIRECTORY "${FFATMO_RECORDER_PACKAGE_DIR}/64")
+    else()
+        target_compile_definitions(FFAtmoEngineRecorder PRIVATE LIN=1)
+        set_target_properties(FFAtmoEngineRecorder PROPERTIES PREFIX "" SUFFIX ".xpl" OUTPUT_NAME "lin"
+            LIBRARY_OUTPUT_DIRECTORY "${FFATMO_RECORDER_PACKAGE_DIR}/64")
     endif()
 endif()

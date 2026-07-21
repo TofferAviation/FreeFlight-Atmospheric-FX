@@ -1,0 +1,134 @@
+name: Build Engine v1 Snapshot Recorder
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - engine/v1
+    paths:
+      - "CMakeLists.txt"
+      - "src/engine/**"
+      - "src/diagnostics/**"
+      - "src/host/**"
+      - "src/RecorderDebugPlugin.cpp"
+      - "tests/ReplayTests.cpp"
+      - ".github/workflows/engine-v1-recorder.yml"
+  pull_request:
+    branches:
+      - engine/v1
+    paths:
+      - "CMakeLists.txt"
+      - "src/engine/**"
+      - "src/diagnostics/**"
+      - "src/host/**"
+      - "src/RecorderDebugPlugin.cpp"
+      - "tests/ReplayTests.cpp"
+      - ".github/workflows/engine-v1-recorder.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ffatmo-engine-v1-recorder-${{ github.event.pull_request.number || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out recorder source
+        uses: actions/checkout@v4
+
+      - name: Fetch X-Plane Plugin SDK 4.3.0
+        id: xplane_sdk
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path third_party | Out-Null
+          $archive = Join-Path $pwd "third_party/XPSDK430.zip"
+          $destination = Join-Path $pwd "third_party/xplane-sdk"
+          Invoke-WebRequest `
+            -Uri "https://developer.x-plane.com/wp-content/plugins/code-sample-generation/sdk_zip_files/XPSDK430.zip" `
+            -OutFile $archive
+          Expand-Archive -LiteralPath $archive -DestinationPath $destination -Force
+          $header = Get-ChildItem $destination -Recurse -Filter "XPLMPlugin.h" |
+            Where-Object { $_.FullName -match '[\\/]CHeaders[\\/]XPLM[\\/]XPLMPlugin\.h$' } |
+            Select-Object -First 1
+          if (-not $header) { throw "The X-Plane SDK archive did not contain XPLMPlugin.h" }
+          $sdkRoot = Split-Path (Split-Path (Split-Path $header.FullName -Parent) -Parent) -Parent
+          if (-not (Test-Path (Join-Path $sdkRoot "Libraries/Win/XPLM_64.lib"))) {
+            throw "The X-Plane SDK Windows link library was not found"
+          }
+          "path=$sdkRoot" >> $env:GITHUB_OUTPUT
+
+      - name: Configure recorder build
+        shell: pwsh
+        run: >-
+          cmake -S . -B build-recorder -A x64
+          -DXPLANE_SDK="${{ steps.xplane_sdk.outputs.path }}"
+          -DFFATMO_BUILD_PLUGIN=OFF
+          -DFFATMO_BUILD_COMPANION=OFF
+          -DFFATMO_BUILD_IMGUI_PANEL=OFF
+          -DFFATMO_BUILD_GEOMETRY_DEBUG=OFF
+          -DFFATMO_BUILD_RECORDER_DEBUG=ON
+          -DFFATMO_BUILD_TESTS=ON
+          -DFFATMO_GIT_REVISION="${{ github.sha }}"
+
+      - name: Build recorder and tests
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path build-logs | Out-Null
+          & cmake --build build-recorder --config Release --target FFAtmoEngineRecorder ffatmo_core_tests ffatmo_acf_tests ffatmo_replay_tests *> build-logs/build.txt
+          $buildExit = $LASTEXITCODE
+          if ($buildExit -ne 0) { exit $buildExit }
+          & ctest --test-dir build-recorder -C Release --output-on-failure *> build-logs/tests.txt
+          $testExit = $LASTEXITCODE
+          if ($testExit -ne 0) { exit $testExit }
+          $plugin = "package/FFAtmoEngineRecorder/64/win.xpl"
+          if (-not (Test-Path $plugin)) { throw "Snapshot recorder win.xpl was not produced" }
+          if ((Get-Item $plugin).Length -lt 50000) { throw "Snapshot recorder win.xpl is unexpectedly small" }
+
+      - name: Upload build diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: FFAtmoEngineRecorder-build-diagnostics
+          path: build-logs
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Assemble recorder package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path artifact/FFAtmoEngineRecorder/64 | Out-Null
+          Copy-Item package/FFAtmoEngineRecorder/64/win.xpl artifact/FFAtmoEngineRecorder/64/win.xpl -Force
+          @'
+          FFAtmo Engine v1 Snapshot Recorder
+
+          INSTALL
+          Copy the FFAtmoEngineRecorder folder into:
+          X-Plane 12/Resources/plugins/
+
+          It installs separately from the normal FFAtmo and geometry-debug plugins.
+
+          RECORD
+          1. Start X-Plane and load the Boeing 737-800NG.
+          2. Open Plugins > FFAtmo Engine Recorder > Start Recording.
+          3. Fly the controlled test profile described in docs/SNAPSHOT_RECORDER_TEST_PLAN.md.
+          4. Use Add Event Marker before each major phase when practical.
+          5. Select Stop and Finalize before closing X-Plane.
+
+          SEND BACK
+          - FFAtmoEngineRecorder/recordings/<timestamp>-B738.ffar
+          - matching files from FFAtmoEngineRecorder/reports/
+          - X-Plane 12/Log.txt
+          '@ | Set-Content artifact/FFAtmoEngineRecorder/README_TESTING.txt -Encoding utf8
+          "git_revision=${{ github.sha }}" | Set-Content artifact/FFAtmoEngineRecorder/BUILD_INFO.txt -Encoding utf8
+
+      - name: Upload snapshot recorder plugin
+        uses: actions/upload-artifact@v4
+        with:
+          name: FFAtmoEngineRecorder-win64
+          path: artifact/FFAtmoEngineRecorder
+          if-no-files-found: error
+          retention-days: 14

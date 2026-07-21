@@ -12,12 +12,22 @@ on:
       - "src/GeometryDebugOverlay.*"
       - "tests/AcfParserTests.cpp"
       - ".github/workflows/engine-v1-geometry-debug.yml"
+  pull_request:
+    branches:
+      - engine/v1
+    paths:
+      - "CMakeLists.txt"
+      - "src/acf/**"
+      - "src/GeometryDebugPlugin.cpp"
+      - "src/GeometryDebugOverlay.*"
+      - "tests/AcfParserTests.cpp"
+      - ".github/workflows/engine-v1-geometry-debug.yml"
 
 permissions:
   contents: read
 
 concurrency:
-  group: ffatmo-engine-v1-geometry-debug
+  group: ffatmo-engine-v1-geometry-debug-${{ github.event.pull_request.number || github.ref_name }}
   cancel-in-progress: true
 
 jobs:

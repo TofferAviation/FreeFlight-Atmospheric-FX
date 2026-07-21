@@ -9,6 +9,7 @@
 
 namespace ffatmo {
 
+// Development-only visual validation of ACF-derived aircraft geometry.
 class GeometryDebugOverlay {
 public:
     GeometryDebugOverlay() = default;

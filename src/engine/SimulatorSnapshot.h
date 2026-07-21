@@ -66,10 +66,12 @@ struct EngineSnapshot {
 };
 
 struct AtmosphereProfileSnapshot {
-    std::uint32_t levelCount = 0;
-    std::array<float, kMaximumAtmosphereLevels> altitudeMslM {};
+    std::uint32_t thermodynamicLevelCount = 0;
+    std::uint32_t windLevelCount = 0;
+    std::array<float, kMaximumAtmosphereLevels> thermodynamicAltitudeMslM {};
     std::array<float, kMaximumAtmosphereLevels> temperatureK {};
     std::array<float, kMaximumAtmosphereLevels> dewPointK {};
+    std::array<float, kMaximumAtmosphereLevels> windAltitudeMslM {};
     std::array<float, kMaximumAtmosphereLevels> windSpeedMps {};
     std::array<float, kMaximumAtmosphereLevels> windDirectionDegTrue {};
     std::array<float, kMaximumAtmosphereLevels> shearSpeedMps {};

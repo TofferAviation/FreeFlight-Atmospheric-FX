@@ -8,9 +8,12 @@ on:
     paths:
       - "CMakeLists.txt"
       - "src/acf/**"
+      - "src/diagnostics/**"
+      - "src/engine/**"
       - "src/GeometryDebugPlugin.cpp"
       - "src/GeometryDebugOverlay.*"
       - "tests/AcfParserTests.cpp"
+      - "tests/ReplayTests.cpp"
       - ".github/workflows/engine-v1-geometry-debug.yml"
   pull_request:
     branches:
@@ -18,9 +21,12 @@ on:
     paths:
       - "CMakeLists.txt"
       - "src/acf/**"
+      - "src/diagnostics/**"
+      - "src/engine/**"
       - "src/GeometryDebugPlugin.cpp"
       - "src/GeometryDebugOverlay.*"
       - "tests/AcfParserTests.cpp"
+      - "tests/ReplayTests.cpp"
       - ".github/workflows/engine-v1-geometry-debug.yml"
 
 permissions:
@@ -74,7 +80,7 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path build-logs | Out-Null
-          & cmake --build build-geometry-debug --config Release --target FFAtmoEngineDebug ffatmo_core_tests ffatmo_acf_tests *> build-logs/build.txt
+          & cmake --build build-geometry-debug --config Release --target FFAtmoEngineDebug ffatmo_core_tests ffatmo_acf_tests ffatmo_replay_tests *> build-logs/build.txt
           $buildExit = $LASTEXITCODE
           if ($buildExit -ne 0) {
             Write-Host "Build failed; diagnostics are being uploaded."

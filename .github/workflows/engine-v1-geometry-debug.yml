@@ -54,7 +54,7 @@ jobs:
             Select-Object -First 1
           if (-not $header) { throw "The X-Plane SDK archive did not contain XPLMPlugin.h" }
           $sdkRoot = Split-Path (Split-Path (Split-Path $header.FullName -Parent) -Parent) -Parent
-          if (-not (Test-Path (Join-Path $sdkRoot "Libraries/Win/XPLM_64.lib")) {
+          if (-not (Test-Path (Join-Path $sdkRoot "Libraries/Win/XPLM_64.lib"))) {
             throw "The X-Plane SDK Windows link library was not found"
           }
           "path=$sdkRoot" >> $env:GITHUB_OUTPUT

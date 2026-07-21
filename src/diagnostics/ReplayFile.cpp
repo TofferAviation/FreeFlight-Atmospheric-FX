@@ -58,7 +58,6 @@ private:
 class ByteReader {
 public:
     explicit ByteReader(const std::vector<std::uint8_t>& bytes) : bytes_(bytes) {}
-
     bool u8(std::uint8_t& value) {
         if (offset_ >= bytes_.size()) return false;
         value = bytes_[offset_++];
@@ -145,15 +144,12 @@ bool readExact(std::ifstream& stream, std::vector<std::uint8_t>& bytes, std::siz
 void appendVec3f(ByteWriter& writer, const engine::Vec3f& value) {
     writer.f32(value.x); writer.f32(value.y); writer.f32(value.z);
 }
-
 void appendVec3d(ByteWriter& writer, const engine::Vec3d& value) {
     writer.f64(value.x); writer.f64(value.y); writer.f64(value.z);
 }
-
 bool readVec3f(ByteReader& reader, engine::Vec3f& value) {
     return reader.f32(value.x) && reader.f32(value.y) && reader.f32(value.z);
 }
-
 bool readVec3d(ByteReader& reader, engine::Vec3d& value) {
     return reader.f64(value.x) && reader.f64(value.y) && reader.f64(value.z);
 }
@@ -162,7 +158,6 @@ template <std::size_t N>
 void appendFloatArray(ByteWriter& writer, const std::array<float, N>& values) {
     for (float value : values) writer.f32(value);
 }
-
 template <std::size_t N>
 bool readFloatArray(ByteReader& reader, std::array<float, N>& values) {
     for (float& value : values) if (!reader.f32(value)) return false;
@@ -216,10 +211,13 @@ void appendSnapshot(ByteWriter& writer, const engine::SimulatorSnapshot& snapsho
     writer.f32(atmosphere.gravityMps2);
 
     const auto& profile = atmosphere.profile;
-    writer.u32(profile.thermodynamicLevelCount);
+    writer.u32(profile.temperatureLevelCount);
+    writer.u32(profile.dewPointLevelCount);
     writer.u32(profile.windLevelCount);
-    appendFloatArray(writer, profile.thermodynamicAltitudeMslM);
+    writer.u32(profile.reserved);
+    appendFloatArray(writer, profile.temperatureAltitudeMslM);
     appendFloatArray(writer, profile.temperatureK);
+    appendFloatArray(writer, profile.dewPointAltitudeMslM);
     appendFloatArray(writer, profile.dewPointK);
     appendFloatArray(writer, profile.windAltitudeMslM);
     appendFloatArray(writer, profile.windSpeedMps);
@@ -294,10 +292,13 @@ bool readSnapshot(ByteReader& reader, engine::SimulatorSnapshot& snapshot) {
         !reader.f32(atmosphere.snowRatio) ||
         !reader.f32(atmosphere.hailRatio) ||
         !reader.f32(atmosphere.gravityMps2) ||
-        !reader.u32(profile.thermodynamicLevelCount) ||
+        !reader.u32(profile.temperatureLevelCount) ||
+        !reader.u32(profile.dewPointLevelCount) ||
         !reader.u32(profile.windLevelCount) ||
-        !readFloatArray(reader, profile.thermodynamicAltitudeMslM) ||
+        !reader.u32(profile.reserved) ||
+        !readFloatArray(reader, profile.temperatureAltitudeMslM) ||
         !readFloatArray(reader, profile.temperatureK) ||
+        !readFloatArray(reader, profile.dewPointAltitudeMslM) ||
         !readFloatArray(reader, profile.dewPointK) ||
         !readFloatArray(reader, profile.windAltitudeMslM) ||
         !readFloatArray(reader, profile.windSpeedMps) ||
@@ -307,7 +308,8 @@ bool readSnapshot(ByteReader& reader, engine::SimulatorSnapshot& snapshot) {
         !readFloatArray(reader, profile.turbulenceScale) ||
         !reader.u32(snapshot.engineCount)) return false;
 
-    if (profile.thermodynamicLevelCount > engine::kMaximumAtmosphereLevels ||
+    if (profile.temperatureLevelCount > engine::kMaximumAtmosphereLevels ||
+        profile.dewPointLevelCount > engine::kMaximumAtmosphereLevels ||
         profile.windLevelCount > engine::kMaximumAtmosphereLevels ||
         snapshot.engineCount > engine::kMaximumRecordedEngines) return false;
 

@@ -3,6 +3,7 @@
 #include "engine/SimulatorSnapshot.h"
 
 #include "XPLMDataAccess.h"
+#include "XPLMUtilities.h"
 
 #include <chrono>
 #include <cstdint>

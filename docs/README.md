@@ -25,6 +25,8 @@ This directory is the authoritative design baseline for the next-generation Atmo
 - [REPLAY_SYSTEM_SPEC.md](REPLAY_SYSTEM_SPEC.md) — deterministic recording, replay, regression, and diagnostics design.
 - [DATAREF_CATALOGUE.md](DATAREF_CATALOGUE.md) — authoritative catalogue rules and implementation gate.
 - [DATAREF_SOURCE_INVENTORY.md](DATAREF_SOURCE_INVENTORY.md) — first source pass from the supplied X-Plane `DataRefs.txt`; runtime validation is still required.
+- [ACF_GEOMETRY_PIPELINE.md](ACF_GEOMETRY_PIPELINE.md) — version-aware ACF parsing, normalization, validation, caching, and override design.
+- [fixtures/737_80NG_ACF_ANALYSIS.md](fixtures/737_80NG_ACF_ANALYSIS.md) — first real-aircraft parser analysis based on the Boeing 737-800NG ACF.
 - [DEVELOPMENT_ROADMAP.md](DEVELOPMENT_ROADMAP.md) — milestones, exit criteria, and technical risk gates.
 - [adr/](adr/) — Architecture Decision Records.
 

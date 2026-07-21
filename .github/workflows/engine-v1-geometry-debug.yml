@@ -73,11 +73,31 @@ jobs:
       - name: Build parser, tests, and plugin
         shell: pwsh
         run: |
-          cmake --build build-geometry-debug --config Release --target FFAtmoEngineDebug ffatmo_core_tests ffatmo_acf_tests
-          ctest --test-dir build-geometry-debug -C Release --output-on-failure
+          New-Item -ItemType Directory -Force -Path build-logs | Out-Null
+          & cmake --build build-geometry-debug --config Release --target FFAtmoEngineDebug ffatmo_core_tests ffatmo_acf_tests *> build-logs/build.txt
+          $buildExit = $LASTEXITCODE
+          if ($buildExit -ne 0) {
+            Write-Host "Build failed; diagnostics are being uploaded."
+            exit $buildExit
+          }
+          & ctest --test-dir build-geometry-debug -C Release --output-on-failure *> build-logs/tests.txt
+          $testExit = $LASTEXITCODE
+          if ($testExit -ne 0) {
+            Write-Host "Tests failed; diagnostics are being uploaded."
+            exit $testExit
+          }
           $plugin = "package/FFAtmoEngineDebug/64/win.xpl"
           if (-not (Test-Path $plugin)) { throw "Geometry-debug win.xpl was not produced" }
           if ((Get-Item $plugin).Length -lt 50000) { throw "Geometry-debug win.xpl is unexpectedly small" }
+
+      - name: Upload build diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: FFAtmoEngineDebug-build-diagnostics
+          path: build-logs
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Assemble test package
         shell: pwsh

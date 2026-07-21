@@ -50,13 +50,6 @@ bool GeometryDebugOverlay::start() {
     registeredBefore_ = 0;
     registered_ =
         XPLMRegisterDrawCallback(drawCallback, registeredPhase_, registeredBefore_, this) != 0;
-
-    if (!registered_) {
-        registeredPhase_ = xplm_Phase_Airplanes;
-        registeredBefore_ = 0;
-        registered_ =
-            XPLMRegisterDrawCallback(drawCallback, registeredPhase_, registeredBefore_, this) != 0;
-    }
     return registered_;
 }
 

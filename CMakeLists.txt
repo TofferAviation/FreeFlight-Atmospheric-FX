@@ -119,7 +119,7 @@ if(FFATMO_BUILD_PLUGIN)
     )
     target_link_libraries(FFAtmo PRIVATE ffatmo_core)
     target_compile_definitions(FFAtmo PRIVATE
-        XPLM400=1 XPLM303=1 XPLM301=1 XPLM300=1 XPLM210=1 XPLM200=1 XPLM_64=1
+        XPLM400=1 XPLM303=1 XPLM302=1 XPLM301=1 XPLM300=1 XPLM210=1 XPLM200=1 XPLM_64=1
     )
 
     set(FFATMO_PACKAGE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/package/FFAtmo")
@@ -165,7 +165,7 @@ if(FFATMO_BUILD_GEOMETRY_DEBUG)
     )
     target_link_libraries(FFAtmoEngineDebug PRIVATE ffatmo_core)
     target_compile_definitions(FFAtmoEngineDebug PRIVATE
-        XPLM400=1 XPLM303=1 XPLM301=1 XPLM300=1 XPLM210=1 XPLM200=1 XPLM_64=1
+        XPLM400=1 XPLM303=1 XPLM302=1 XPLM301=1 XPLM300=1 XPLM210=1 XPLM200=1 XPLM_64=1
     )
 
     set(FFATMO_DEBUG_PACKAGE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/package/FFAtmoEngineDebug")

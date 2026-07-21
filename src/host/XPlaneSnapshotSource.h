@@ -37,6 +37,23 @@ public:
                                       float deltaTimeSeconds,
                                       std::uint32_t lifecycleFlags);
 
+    // Non-const identity access refreshes X-Plane's current aircraft first. This
+    // is used by recorder startup so filenames and metadata are not created from
+    // the empty values that can exist while plugins are enabled before an ACF is
+    // fully loaded.
+    std::string aircraftName() {
+        refreshIdentity();
+        return cachedAircraftName_;
+    }
+    std::string aircraftIcao() {
+        refreshIdentity();
+        return cachedAircraftIcao_;
+    }
+    std::string aircraftRelativePath() {
+        refreshIdentity();
+        return cachedAircraftRelativePath_;
+    }
+
     std::string aircraftName() const;
     std::string aircraftIcao() const;
     std::string aircraftRelativePath() const;

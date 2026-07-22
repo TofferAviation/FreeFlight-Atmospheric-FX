@@ -12,18 +12,14 @@
 #include <OpenGL/gl.h>
 #endif
 
-#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdio>
 #include <string>
 #include <utility>
-#include <vector>
 
 namespace ffatmo {
 namespace {
-
-constexpr float kPi = 3.14159265358979323846f;
 
 struct ProjectionContext {
     std::array<float, 16> worldMatrix {};
@@ -35,17 +31,7 @@ struct ProjectionContext {
 struct ScreenPoint {
     float x = 0.0f;
     float y = 0.0f;
-    float clipW = 0.0f;
     bool visible = false;
-};
-
-struct ProjectedParcel {
-    ScreenPoint point;
-    engine::Vec3d localPositionM {};
-    std::uint32_t engineIndex = 0;
-    float radiusPixels = 0.0f;
-    float alpha = 0.0f;
-    float ageRatio = 0.0f;
 };
 
 void multiplyMatrixVector(float destination[4],
@@ -73,89 +59,22 @@ ScreenPoint projectLocalPoint(const ProjectionContext& context,
     float clip[4] {};
     multiplyMatrixVector(eye, context.worldMatrix.data(), world);
     multiplyMatrixVector(clip, context.projectionMatrix.data(), eye);
-
     if (!std::isfinite(clip[3]) || clip[3] <= 0.0001f) return {};
+
     const float inverseW = 1.0f / clip[3];
     const float ndcX = clip[0] * inverseW;
     const float ndcY = clip[1] * inverseW;
     const float ndcZ = clip[2] * inverseW;
     if (!std::isfinite(ndcX) || !std::isfinite(ndcY) || !std::isfinite(ndcZ)) return {};
-    if (ndcX < -1.20f || ndcX > 1.20f ||
-        ndcY < -1.20f || ndcY > 1.20f ||
-        ndcZ < -1.20f || ndcZ > 1.20f) {
-        return {};
-    }
+    if (ndcX < -1.15f || ndcX > 1.15f ||
+        ndcY < -1.15f || ndcY > 1.15f ||
+        ndcZ < -1.15f || ndcZ > 1.15f) return {};
 
-    ScreenPoint result;
-    result.x = static_cast<float>(context.width) * (ndcX * 0.5f + 0.5f);
-    result.y = static_cast<float>(context.height) * (ndcY * 0.5f + 0.5f);
-    result.clipW = clip[3];
-    result.visible = true;
-    return result;
-}
-
-float screenRadiusPixels(const ProjectionContext& context,
-                         const ScreenPoint& point,
-                         float physicalRadiusM) {
-    if (!point.visible || point.clipW <= 0.0f) return 0.0f;
-    const float verticalProjection = std::max(
-        std::abs(context.projectionMatrix[5]), 0.25f);
-    const float pixelsPerMetre = static_cast<float>(context.height) * 0.5f *
-                                 verticalProjection / point.clipW;
-    // Deliberate debug enlargement: parcel physics radii are real metres, but a
-    // lightly enlarged coach mark makes young ice visible during validation.
-    return std::clamp(physicalRadiusM * pixelsPerMetre * 1.65f, 1.8f, 44.0f);
-}
-
-float localDistance(const engine::Vec3d& first, const engine::Vec3d& second) {
-    const double deltaX = first.x - second.x;
-    const double deltaY = first.y - second.y;
-    const double deltaZ = first.z - second.z;
-    return static_cast<float>(std::sqrt(
-        deltaX * deltaX + deltaY * deltaY + deltaZ * deltaZ));
-}
-
-void drawDisc(float x, float y, float radius, float red, float green, float blue, float alpha) {
-    if (radius <= 0.0f || alpha <= 0.0f) return;
-    constexpr int segments = 18;
-    glColor4f(red, green, blue, alpha);
-    glBegin(GL_TRIANGLE_FAN);
-    glVertex2f(x, y);
-    for (int index = 0; index <= segments; ++index) {
-        const float angle = 2.0f * kPi * static_cast<float>(index) /
-                            static_cast<float>(segments);
-        glVertex2f(x + std::cos(angle) * radius,
-                   y + std::sin(angle) * radius);
-    }
-    glEnd();
-}
-
-void drawSoftParcel(const ProjectedParcel& parcel) {
-    const float old = std::clamp(parcel.ageRatio, 0.0f, 1.0f);
-    const float red = 0.90f - 0.13f * old;
-    const float green = 0.96f - 0.12f * old;
-    const float blue = 1.00f - 0.10f * old;
-    drawDisc(parcel.point.x,
-             parcel.point.y,
-             parcel.radiusPixels * 1.55f,
-             red,
-             green,
-             blue,
-             parcel.alpha * 0.16f);
-    drawDisc(parcel.point.x,
-             parcel.point.y,
-             parcel.radiusPixels,
-             red,
-             green,
-             blue,
-             parcel.alpha * 0.30f);
-    drawDisc(parcel.point.x,
-             parcel.point.y,
-             parcel.radiusPixels * 0.48f,
-             0.96f,
-             0.985f,
-             1.0f,
-             parcel.alpha * 0.42f);
+    return {
+        static_cast<float>(context.width) * (ndcX * 0.5f + 0.5f),
+        static_cast<float>(context.height) * (ndcY * 0.5f + 0.5f),
+        true
+    };
 }
 
 void drawCross(const ScreenPoint& point, float radiusPixels) {
@@ -200,8 +119,10 @@ bool ContrailDebugOverlay::start() {
 
 void ContrailDebugOverlay::stop() {
     if (!registered_) return;
-    XPLMUnregisterDrawCallback(
-        drawCallback, registeredPhase_, registeredBefore_, this);
+    XPLMUnregisterDrawCallback(drawCallback,
+                               registeredPhase_,
+                               registeredBefore_,
+                               this);
     registered_ = false;
 }
 
@@ -230,93 +151,51 @@ int ContrailDebugOverlay::draw() {
     context.height = XPLMGetDatai(windowHeight_);
     if (context.width <= 0 || context.height <= 0) return 1;
 
-    std::vector<ProjectedParcel> projected;
-    projected.reserve(parcels_.size());
-    for (const auto& parcel : parcels_) {
-        const ScreenPoint point = projectLocalPoint(context, parcel.localPositionM);
-        if (!point.visible) continue;
-        const float visibility = std::clamp(
-            (parcel.opticalDepth - 0.008f) / 0.22f, 0.0f, 1.0f);
-        if (visibility <= 0.0f) continue;
-
-        ProjectedParcel render;
-        render.point = point;
-        render.localPositionM = parcel.localPositionM;
-        render.engineIndex = parcel.engineIndex;
-        render.radiusPixels = screenRadiusPixels(context, point, parcel.radiusM);
-        render.alpha = 0.18f + 0.72f * std::sqrt(visibility);
-        render.ageRatio = std::clamp(parcel.ageSeconds / 55.0f, 0.0f, 1.0f);
-        projected.push_back(render);
-    }
-
     XPLMSetGraphicsState(0, 0, 0, 0, 1, 0, 0);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-    // Connect consecutive parcels from the same engine to make the discrete
-    // deterministic samples read as one continuous debug trail.
-    std::array<ProjectedParcel, engine::kMaximumRecordedEngines> previous {};
-    std::array<bool, engine::kMaximumRecordedEngines> hasPrevious {};
-    glLineWidth(2.4f);
-    glBegin(GL_LINES);
-    for (const auto& parcel : projected) {
-        if (parcel.engineIndex >= engine::kMaximumRecordedEngines) continue;
-        const std::size_t engineIndex = static_cast<std::size_t>(parcel.engineIndex);
-        if (hasPrevious[engineIndex] &&
-            localDistance(previous[engineIndex].localPositionM,
-                          parcel.localPositionM) < 2000.0f) {
-            const float alpha = std::min(previous[engineIndex].alpha, parcel.alpha) * 0.52f;
-            glColor4f(0.86f, 0.94f, 1.0f, alpha);
-            glVertex2f(previous[engineIndex].point.x, previous[engineIndex].point.y);
-            glVertex2f(parcel.point.x, parcel.point.y);
-        }
-        previous[engineIndex] = parcel;
-        hasPrevious[engineIndex] = true;
-    }
-    glEnd();
-    glLineWidth(1.0f);
-
-    for (const auto& parcel : projected) drawSoftParcel(parcel);
-
-    // Cyan crosses show the parsed live exhaust source locations. They are
-    // intentionally small and disappear once the overlay is disabled.
+    // The old parcel discs and connector lines were intentionally removed.
+    // Only the tiny exhaust-source coach marks remain as alignment diagnostics;
+    // actual contrail visuals are X-Plane-managed world-object instances.
     glLineWidth(2.0f);
     glBegin(GL_LINES);
     for (const auto& source : sources_) {
         const ScreenPoint point = projectLocalPoint(context, source.localPositionM);
         if (source.engineIndex == 0) {
-            glColor4f(0.15f, 0.90f, 1.0f, 0.92f);
+            glColor4f(0.15f, 0.90f, 1.0f, 0.80f);
         } else {
-            glColor4f(0.35f, 0.72f, 1.0f, 0.92f);
+            glColor4f(0.35f, 0.72f, 1.0f, 0.80f);
         }
-        drawCross(point, 6.0f);
+        drawCross(point, 5.0f);
     }
     glEnd();
     glLineWidth(1.0f);
 
     const int left = 18;
     const int top = context.height - 18;
-    const int right = 700;
-    const int bottom = context.height - 92;
+    const int right = 790;
+    const int bottom = context.height - 112;
     XPLMDrawTranslucentDarkBox(left, top, right, bottom);
 
-    char first[512] {};
-    char second[512] {};
-    char third[512] {};
+    char first[640] {};
+    char second[640] {};
+    char third[640] {};
+    char fourth[640] {};
     const float temperatureC = status_.temperatureK - 273.15f;
     std::snprintf(first,
                   sizeof(first),
-                  "FFAtmo LIVE CONTRAIL DEBUG | %s | %s | %s",
+                  "FFAtmo WORLD CONTRAIL DEBUG | %s | %s | %s",
                   status_.aircraftIcao.empty() ? "AIRCRAFT" : status_.aircraftIcao.c_str(),
                   status_.mode.c_str(),
                   status_.geometryStatus.c_str());
     std::snprintf(second,
                   sizeof(second),
-                  "active: %llu | emitted: %llu | expired: %llu | peak: %llu | rebases: %llu",
+                  "renderer: %s | instances: %llu | parcels: %llu | emitted: %llu | expired: %llu",
+                  status_.rendererStatus.c_str(),
+                  static_cast<unsigned long long>(status_.visibleInstances),
                   static_cast<unsigned long long>(status_.activeParcels),
                   static_cast<unsigned long long>(status_.emittedParcels),
-                  static_cast<unsigned long long>(status_.expiredParcels),
-                  static_cast<unsigned long long>(status_.peakParcels),
-                  static_cast<unsigned long long>(status_.originRebases));
+                  static_cast<unsigned long long>(status_.expiredParcels));
     std::snprintf(third,
                   sizeof(third),
                   "formation: %.1f%% | RHi: %.1f%% | temperature: %.1f C | physics: %s",
@@ -325,18 +204,24 @@ int ContrailDebugOverlay::draw() {
                   temperatureC,
                   status_.physicsFrozen ? "FROZEN" :
                       (status_.simulationEnabled ? "RUNNING" : "DISABLED"));
+    std::snprintf(fourth,
+                  sizeof(fourth),
+                  "preview gate: %s | peak parcels: %llu | origin rebases: %llu",
+                  status_.previewGateOpen ? "AIRBORNE" : "WAITING FOR AIRBORNE / AIRSPEED",
+                  static_cast<unsigned long long>(status_.peakParcels),
+                  static_cast<unsigned long long>(status_.originRebases));
 
     float titleColour[3] = {0.72f, 0.92f, 1.0f};
     float bodyColour[3] = {1.0f, 1.0f, 1.0f};
     float stateColour[3] = {
-        status_.physicsFrozen ? 1.0f : 0.55f,
-        status_.physicsFrozen ? 0.75f : 1.0f,
-        status_.physicsFrozen ? 0.20f : 0.65f
+        status_.rendererReady ? 0.45f : 1.0f,
+        status_.rendererReady ? 1.0f : 0.55f,
+        status_.rendererReady ? 0.55f : 0.25f
     };
-    drawStatusLine(left + 10, bottom + 55, first, titleColour);
-    drawStatusLine(left + 10, bottom + 35, second, bodyColour);
-    drawStatusLine(left + 10, bottom + 15, third, stateColour);
-
+    drawStatusLine(left + 10, top - 19, first, titleColour);
+    drawStatusLine(left + 10, top - 39, second, stateColour);
+    drawStatusLine(left + 10, top - 59, third, bodyColour);
+    drawStatusLine(left + 10, top - 79, fourth, bodyColour);
     return 1;
 }
 

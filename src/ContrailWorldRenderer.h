@@ -2,6 +2,7 @@
 
 #include "ContrailDebugOverlay.h"
 
+#include "XPLMCamera.h"
 #include "XPLMDataAccess.h"
 #include "XPLMInstance.h"
 #include "XPLMScenery.h"
@@ -21,7 +22,7 @@ namespace ffatmo {
 class ContrailWorldRenderer {
 public:
     static constexpr std::size_t kOpacityBucketCount = 4;
-    static constexpr std::size_t kInstancesPerBucket = 144;
+    static constexpr std::size_t kInstancesPerBucket = 256;
 
     ContrailWorldRenderer() {
         for (std::size_t index = 0; index < loadContexts_.size(); ++index) {
@@ -41,6 +42,8 @@ public:
         visibleInstanceCount_ = 0;
         enabled_ = true;
 
+        // XPLMInstance resolves custom animation datarefs while loading the OBJ,
+        // so this accessor must exist before XPLMLoadObjectAsync is called.
         scaleDataRef_ = XPLMRegisterDataAccessor(
             "ffatmo/contrail_debug/scale",
             xplmType_Float,
@@ -106,16 +109,60 @@ public:
             return;
         }
 
-        std::vector<const ContrailDebugRenderParcel*> visible;
-        visible.reserve(parcels.size());
+        XPLMCameraPosition_t camera {};
+        XPLMReadCameraPosition(&camera);
+
+        // Physics parcels are intentionally sparse. Build render-only samples between
+        // consecutive parcels from each engine so the trail reads as condensation rather
+        // than a string of separate balls. This does not alter deterministic physics.
+        std::vector<ContrailDebugRenderParcel> densified;
+        densified.reserve(parcels.size() * 5);
+        std::array<ContrailDebugRenderParcel, engine::kMaximumRecordedEngines> previous {};
+        std::array<bool, engine::kMaximumRecordedEngines> hasPrevious {};
+
         for (const auto& parcel : parcels) {
-            if (parcel.opticalDepth >= 0.010f &&
-                std::isfinite(parcel.localPositionM.x) &&
-                std::isfinite(parcel.localPositionM.y) &&
-                std::isfinite(parcel.localPositionM.z) &&
-                std::isfinite(parcel.radiusM)) {
-                visible.push_back(&parcel);
+            if (!finiteParcel(parcel) ||
+                parcel.engineIndex >= engine::kMaximumRecordedEngines) {
+                continue;
             }
+
+            const std::size_t engineIndex = static_cast<std::size_t>(parcel.engineIndex);
+            if (hasPrevious[engineIndex]) {
+                const auto& first = previous[engineIndex];
+                const double gapM = distance(first.localPositionM, parcel.localPositionM);
+                if (std::isfinite(gapM) && gapM > 4.0 && gapM < 250.0) {
+                    const int segmentCount = std::clamp(
+                        static_cast<int>(std::ceil(gapM / 18.0)), 1, 7);
+                    for (int segment = 1; segment < segmentCount; ++segment) {
+                        const float ratio = static_cast<float>(segment) /
+                                            static_cast<float>(segmentCount);
+                        ContrailDebugRenderParcel interpolated;
+                        interpolated.parcelId = parcel.parcelId * 8u +
+                                                static_cast<std::uint64_t>(segment);
+                        interpolated.engineIndex = parcel.engineIndex;
+                        interpolated.localPositionM = lerp(
+                            first.localPositionM, parcel.localPositionM, ratio);
+                        interpolated.radiusM = mix(first.radiusM, parcel.radiusM, ratio);
+                        interpolated.opticalDepth = mix(
+                            first.opticalDepth, parcel.opticalDepth, ratio);
+                        interpolated.normalizedIceMass = mix(
+                            first.normalizedIceMass, parcel.normalizedIceMass, ratio);
+                        interpolated.ageSeconds = mix(
+                            first.ageSeconds, parcel.ageSeconds, ratio);
+                        densified.push_back(interpolated);
+                    }
+                }
+            }
+
+            densified.push_back(parcel);
+            previous[engineIndex] = parcel;
+            hasPrevious[engineIndex] = true;
+        }
+
+        std::vector<const ContrailDebugRenderParcel*> visible;
+        visible.reserve(densified.size());
+        for (const auto& parcel : densified) {
+            if (parcel.opticalDepth >= 0.010f) visible.push_back(&parcel);
         }
 
         constexpr std::size_t maximumVisible =
@@ -148,13 +195,18 @@ public:
             for (; index < assigned.size(); ++index) {
                 const auto& parcel = *assigned[index];
                 const float ageExpansion = 1.0f +
-                    0.18f * std::clamp(parcel.ageSeconds / 55.0f, 0.0f, 1.0f);
-                const float scaleM = std::clamp(parcel.radiusM * ageExpansion,
-                                                0.70f,
-                                                28.0f);
-                const float roll = static_cast<float>(
+                    0.12f * std::clamp(parcel.ageSeconds / 55.0f, 0.0f, 1.0f);
+
+                // The OBJ quad is wider than it is tall. Half-radius scaling keeps
+                // young engine-core condensation tight and prevents old parcels from
+                // becoming the giant opaque balls seen in renderer v2.
+                const float scaleM = std::clamp(
+                    parcel.radiusM * 0.42f * ageExpansion,
+                    0.34f,
+                    8.5f);
+                const float textureRollDeg = static_cast<float>(
                     (parcel.parcelId * 47u + parcel.engineIndex * 83u) % 360u);
-                setInstance(pool.instances[index], parcel, scaleM, roll);
+                setInstance(pool.instances[index], parcel, scaleM, textureRollDeg, camera);
                 ++visibleInstanceCount_;
             }
             for (; index < pool.instances.size(); ++index) {
@@ -193,12 +245,44 @@ private:
         std::size_t bucket = 0;
     };
 
+    static constexpr double kRadiansToDegrees = 57.2957795130823208768;
+
     static void log(const std::string& message) {
         XPLMDebugString(("[FFAtmo Contrail World Renderer] " + message).c_str());
     }
 
     static float readScale(void*) {
         return 1.0f;
+    }
+
+    static bool finiteParcel(const ContrailDebugRenderParcel& parcel) {
+        return std::isfinite(parcel.localPositionM.x) &&
+               std::isfinite(parcel.localPositionM.y) &&
+               std::isfinite(parcel.localPositionM.z) &&
+               std::isfinite(parcel.radiusM) &&
+               std::isfinite(parcel.opticalDepth) &&
+               std::isfinite(parcel.ageSeconds);
+    }
+
+    static double distance(const engine::Vec3d& first, const engine::Vec3d& second) {
+        const double x = second.x - first.x;
+        const double y = second.y - first.y;
+        const double z = second.z - first.z;
+        return std::sqrt(x * x + y * y + z * z);
+    }
+
+    static engine::Vec3d lerp(const engine::Vec3d& first,
+                              const engine::Vec3d& second,
+                              float ratio) {
+        return {
+            first.x + (second.x - first.x) * static_cast<double>(ratio),
+            first.y + (second.y - first.y) * static_cast<double>(ratio),
+            first.z + (second.z - first.z) * static_cast<double>(ratio)
+        };
+    }
+
+    static float mix(float first, float second, float ratio) {
+        return first + (second - first) * ratio;
     }
 
     static void objectLoadedCallback(XPLMObjectRef object, void* refcon) {
@@ -237,7 +321,7 @@ private:
             return;
         }
         ++loadedObjectCount_;
-        log("Loaded opacity bucket " + std::to_string(bucket) +
+        log("Loaded camera-facing opacity bucket " + std::to_string(bucket) +
             " with " + std::to_string(pool.instances.size()) +
             " pooled instances.\n");
     }
@@ -253,19 +337,40 @@ private:
         visibleInstanceCount_ = 0;
     }
 
+    static void billboardAngles(const ContrailDebugRenderParcel& parcel,
+                                const XPLMCameraPosition_t& camera,
+                                float& headingDeg,
+                                float& pitchDeg) {
+        const double deltaX = static_cast<double>(camera.x) - parcel.localPositionM.x;
+        const double deltaY = static_cast<double>(camera.y) - parcel.localPositionM.y;
+        const double deltaZ = static_cast<double>(camera.z) - parcel.localPositionM.z;
+        const double horizontal = std::sqrt(deltaX * deltaX + deltaZ * deltaZ);
+
+        // X-Plane object heading zero points along local -Z. Rotate that forward
+        // vector toward the camera, then pitch it to the camera elevation.
+        headingDeg = static_cast<float>(std::atan2(deltaX, -deltaZ) * kRadiansToDegrees);
+        pitchDeg = static_cast<float>(std::atan2(deltaY, std::max(horizontal, 1.0e-6)) *
+                                      kRadiansToDegrees);
+    }
+
     void setInstance(XPLMInstanceRef instance,
                      const ContrailDebugRenderParcel& parcel,
                      float scaleM,
-                     float rollDeg) {
+                     float textureRollDeg,
+                     const XPLMCameraPosition_t& camera) {
         if (!instance) return;
+        float headingDeg = 0.0f;
+        float pitchDeg = 0.0f;
+        billboardAngles(parcel, camera, headingDeg, pitchDeg);
+
         XPLMDrawInfo_t drawInfo {};
         drawInfo.structSize = sizeof(drawInfo);
         drawInfo.x = static_cast<float>(parcel.localPositionM.x);
         drawInfo.y = static_cast<float>(parcel.localPositionM.y);
         drawInfo.z = static_cast<float>(parcel.localPositionM.z);
-        drawInfo.pitch = 0.0f;
-        drawInfo.heading = 0.0f;
-        drawInfo.roll = rollDeg;
+        drawInfo.pitch = pitchDeg;
+        drawInfo.heading = headingDeg;
+        drawInfo.roll = camera.roll + textureRollDeg;
         float data[] = {scaleM};
         XPLMInstanceSetPosition(instance, &drawInfo, data);
     }

@@ -112,16 +112,57 @@ public:
         XPLMCameraPosition_t camera {};
         XPLMReadCameraPosition(&camera);
 
-        std::vector<const ContrailDebugRenderParcel*> visible;
-        visible.reserve(parcels.size());
+        // Physics parcels are intentionally sparse. Build render-only samples between
+        // consecutive parcels from each engine so the trail reads as condensation rather
+        // than a string of separate balls. This does not alter deterministic physics.
+        std::vector<ContrailDebugRenderParcel> densified;
+        densified.reserve(parcels.size() * 5);
+        std::array<ContrailDebugRenderParcel, engine::kMaximumRecordedEngines> previous {};
+        std::array<bool, engine::kMaximumRecordedEngines> hasPrevious {};
+
         for (const auto& parcel : parcels) {
-            if (parcel.opticalDepth >= 0.010f &&
-                std::isfinite(parcel.localPositionM.x) &&
-                std::isfinite(parcel.localPositionM.y) &&
-                std::isfinite(parcel.localPositionM.z) &&
-                std::isfinite(parcel.radiusM)) {
-                visible.push_back(&parcel);
+            if (!finiteParcel(parcel) ||
+                parcel.engineIndex >= engine::kMaximumRecordedEngines) {
+                continue;
             }
+
+            const std::size_t engineIndex = static_cast<std::size_t>(parcel.engineIndex);
+            if (hasPrevious[engineIndex]) {
+                const auto& first = previous[engineIndex];
+                const double gapM = distance(first.localPositionM, parcel.localPositionM);
+                if (std::isfinite(gapM) && gapM > 4.0 && gapM < 250.0) {
+                    const int segmentCount = std::clamp(
+                        static_cast<int>(std::ceil(gapM / 18.0)), 1, 7);
+                    for (int segment = 1; segment < segmentCount; ++segment) {
+                        const float ratio = static_cast<float>(segment) /
+                                            static_cast<float>(segmentCount);
+                        ContrailDebugRenderParcel interpolated;
+                        interpolated.parcelId = parcel.parcelId * 8u +
+                                                static_cast<std::uint64_t>(segment);
+                        interpolated.engineIndex = parcel.engineIndex;
+                        interpolated.localPositionM = lerp(
+                            first.localPositionM, parcel.localPositionM, ratio);
+                        interpolated.radiusM = mix(first.radiusM, parcel.radiusM, ratio);
+                        interpolated.opticalDepth = mix(
+                            first.opticalDepth, parcel.opticalDepth, ratio);
+                        interpolated.normalizedIceMass = mix(
+                            first.normalizedIceMass, parcel.normalizedIceMass, ratio);
+                        interpolated.ageSeconds = mix(
+                            first.ageSeconds, parcel.ageSeconds, ratio);
+                        densified.push_back(interpolated);
+                    }
+                }
+            }
+
+            densified.push_back(parcel);
+            previous[engineIndex] = parcel;
+            hasPrevious[engineIndex] = true;
+        }
+
+        std::vector<const ContrailDebugRenderParcel*> visible;
+        visible.reserve(densified.size());
+        for (const auto& parcel : densified) {
+            if (parcel.opticalDepth >= 0.010f) visible.push_back(&parcel);
         }
 
         constexpr std::size_t maximumVisible =
@@ -212,6 +253,36 @@ private:
 
     static float readScale(void*) {
         return 1.0f;
+    }
+
+    static bool finiteParcel(const ContrailDebugRenderParcel& parcel) {
+        return std::isfinite(parcel.localPositionM.x) &&
+               std::isfinite(parcel.localPositionM.y) &&
+               std::isfinite(parcel.localPositionM.z) &&
+               std::isfinite(parcel.radiusM) &&
+               std::isfinite(parcel.opticalDepth) &&
+               std::isfinite(parcel.ageSeconds);
+    }
+
+    static double distance(const engine::Vec3d& first, const engine::Vec3d& second) {
+        const double x = second.x - first.x;
+        const double y = second.y - first.y;
+        const double z = second.z - first.z;
+        return std::sqrt(x * x + y * y + z * z);
+    }
+
+    static engine::Vec3d lerp(const engine::Vec3d& first,
+                              const engine::Vec3d& second,
+                              float ratio) {
+        return {
+            first.x + (second.x - first.x) * static_cast<double>(ratio),
+            first.y + (second.y - first.y) * static_cast<double>(ratio),
+            first.z + (second.z - first.z) * static_cast<double>(ratio)
+        };
+    }
+
+    static float mix(float first, float second, float ratio) {
+        return first + (second - first) * ratio;
     }
 
     static void objectLoadedCallback(XPLMObjectRef object, void* refcon) {

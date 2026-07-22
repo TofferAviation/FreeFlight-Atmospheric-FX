@@ -1,0 +1,1 @@
+World-space rendering implementation follows accepted physics validation.

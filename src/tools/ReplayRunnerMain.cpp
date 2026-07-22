@@ -15,7 +15,8 @@ void printUsage() {
               << "  FFAtmoReplayRunner <recording.ffar> [--output <directory>] [--no-csv]\n\n"
               << "The runner validates the replay, normalizes aircraft/environment state,\n"
               << "detects X-Plane local-origin rebases, freezes physics during pause/replay,\n"
-              << "and writes a deterministic summary and optional CSV.\n";
+              << "and writes a deterministic summary and optional CSV.\n"
+              << "No X-Plane installation is required to run this tool.\n";
 }
 
 }  // namespace

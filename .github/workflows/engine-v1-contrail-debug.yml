@@ -13,6 +13,8 @@ on:
       - "src/host/**"
       - "src/ContrailDebugPlugin.cpp"
       - "src/ContrailDebugOverlay.*"
+      - "src/ContrailWorldRenderer.*"
+      - "tools/generate_contrail_assets.py"
       - "tests/LiveContrailDebugTests.cpp"
       - ".github/workflows/engine-v1-contrail-debug.yml"
   pull_request:
@@ -26,6 +28,8 @@ on:
       - "src/host/**"
       - "src/ContrailDebugPlugin.cpp"
       - "src/ContrailDebugOverlay.*"
+      - "src/ContrailWorldRenderer.*"
+      - "tools/generate_contrail_assets.py"
       - "tests/LiveContrailDebugTests.cpp"
       - ".github/workflows/engine-v1-contrail-debug.yml"
 
@@ -56,7 +60,7 @@ jobs:
             -OutFile $archive
           Expand-Archive -LiteralPath $archive -DestinationPath $destination -Force
           $header = Get-ChildItem $destination -Recurse -Filter "XPLMPlugin.h" |
-            Where-Object { $_.FullName -match '[\\/]CHeaders[\\/]XPLM[\\/]XPLMPlugin\.h$' } |
+            Where-Object { $_.FullName -match '[\/]CHeaders[\/]XPLM[\/]XPLMPlugin\.h$' } |
             Select-Object -First 1
           if (-not $header) { throw "The X-Plane SDK archive did not contain XPLMPlugin.h" }
           $sdkRoot = Split-Path (Split-Path (Split-Path $header.FullName -Parent) -Parent) -Parent
@@ -94,6 +98,18 @@ jobs:
           if (-not (Test-Path $plugin)) { throw "Contrail visual-debug win.xpl was not produced" }
           if ((Get-Item $plugin).Length -lt 100000) { throw "Contrail visual-debug win.xpl is unexpectedly small" }
 
+      - name: Generate world-renderer assets
+        shell: pwsh
+        run: |
+          python tools/generate_contrail_assets.py generated-contrail-assets
+          $objects = Get-ChildItem generated-contrail-assets -Filter "contrail_puff_*.obj"
+          $textures = Get-ChildItem generated-contrail-assets -Filter "contrail_puff_*.png"
+          if ($objects.Count -ne 4) { throw "Expected four generated contrail OBJ files" }
+          if ($textures.Count -ne 4) { throw "Expected four generated contrail PNG files" }
+          foreach ($texture in $textures) {
+            if ($texture.Length -lt 1000) { throw "Generated texture is unexpectedly small: $($texture.Name)" }
+          }
+
       - name: Upload build diagnostics
         if: always()
         uses: actions/upload-artifact@v4
@@ -107,40 +123,44 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path artifact/FFAtmoContrailDebug/64 | Out-Null
+          New-Item -ItemType Directory -Force -Path artifact/FFAtmoContrailDebug/assets | Out-Null
           Copy-Item package/FFAtmoContrailDebug/64/win.xpl artifact/FFAtmoContrailDebug/64/win.xpl -Force
+          Copy-Item generated-contrail-assets/* artifact/FFAtmoContrailDebug/assets/ -Force
           @'
-          FFAtmo Engine v1 Live Contrail Visual Debug
+          FFAtmo Engine v1 World Contrail Visual Debug v2
 
           INSTALL
           Copy the FFAtmoContrailDebug folder into:
           X-Plane 12/Resources/plugins/
 
-          This installs separately from FFAtmo, FFAtmoEngineRecorder, and
-          FFAtmoEngineDebug.
+          Keep the included assets folder beside the 64 folder. This installs
+          separately from FFAtmo, FFAtmoEngineRecorder, and FFAtmoEngineDebug.
 
-          FIRST VISUAL TEST
-          1. Load the Boeing 737-800NG and use an external camera.
-          2. The plugin starts in FORCED DRY PREVIEW mode so formation is visible
-             regardless of real weather or altitude.
-          3. Fly straight for at least 30 seconds with the overlay enabled.
-          4. Cyan crosses are the parsed ACF exhaust origins.
-          5. White/blue coach-mark parcels form behind each engine, spread, descend,
-             and fade in the dry preview atmosphere.
-          6. Open Plugins > FFAtmo Contrail Visual Debug to change modes, reset the
-             trail, or export the live report.
+          FIRST WORLD-SPACE TEST
+          1. Load the Boeing 737-800NG and use an external rear-oblique camera.
+          2. The forced preview now waits until the aircraft is at least 120 m AGL
+             and 65 m/s true airspeed. It must not emit while parked or taxiing.
+          3. After takeoff, fly straight for 30-60 seconds.
+          4. The status panel must say WORLD OBJECTS READY.
+          5. Cyan crosses remain only as tiny exhaust-alignment references.
+          6. Contrail puffs are real X-Plane world objects with normal depth testing.
+             They should pass behind the aircraft and scenery instead of drawing on top.
+          7. There are no connector lines. Older parcels should spread, fade, descend,
+             and show a first inward counter-rotating wake roll-up.
 
           ATMOSPHERE MODES
-          - LIVE WEATHER: uses actual X-Plane temperature, pressure, humidity, engines.
-          - FORCED DRY PREVIEW: forms a young trail that should fully fade.
-          - FORCED PERSISTENT PREVIEW: ice-supersaturated test mode for long-lived trail.
+          - LIVE WEATHER: actual X-Plane atmosphere and engine state.
+          - FORCED DRY PREVIEW: airborne-only formation followed by full decay.
+          - FORCED PERSISTENT PREVIEW: airborne-only ice-supersaturated growth test.
 
           SEND BACK
-          - side/rear-oblique screenshots showing the developing trail
+          - one rear-oblique screenshot shortly after formation starts
+          - one side/rear screenshot after 30-60 seconds
           - X-Plane 12/Log.txt
           - FFAtmoContrailDebug/reports/contrail_visual_debug.txt
 
-          The renderer is a Vulkan-safe screen-space engineering visualizer, not the
-          final production particle renderer.
+          This remains an engineering world-object renderer. Texture density, parcel
+          LODs, wake calibration, and final production atmospheric shaders come later.
           '@ | Set-Content artifact/FFAtmoContrailDebug/README_TESTING.txt -Encoding utf8
           "git_revision=${{ github.sha }}" | Set-Content artifact/FFAtmoContrailDebug/BUILD_INFO.txt -Encoding utf8
 

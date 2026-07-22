@@ -12,6 +12,7 @@
 namespace ffatmo {
 
 struct ContrailDebugRenderParcel {
+    std::uint64_t parcelId = 0;
     engine::Vec3d localPositionM {};
     std::uint32_t engineIndex = 0;
     float radiusM = 0.0f;
@@ -29,16 +30,20 @@ struct ContrailDebugOverlayStatus {
     std::string aircraftIcao;
     std::string mode;
     std::string geometryStatus;
+    std::string rendererStatus;
     std::uint64_t activeParcels = 0;
     std::uint64_t emittedParcels = 0;
     std::uint64_t expiredParcels = 0;
     std::uint64_t peakParcels = 0;
     std::uint64_t originRebases = 0;
+    std::uint64_t visibleInstances = 0;
     float formationPotential = 0.0f;
     float relativeHumidityIcePercent = 0.0f;
     float temperatureK = 0.0f;
     bool physicsFrozen = false;
     bool simulationEnabled = true;
+    bool rendererReady = false;
+    bool previewGateOpen = false;
 };
 
 class ContrailDebugOverlay {

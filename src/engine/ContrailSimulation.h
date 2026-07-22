@@ -39,6 +39,13 @@ struct ContrailParcel {
     float opticalDepth = 0.0f;
     float sourceTemperatureK = 0.0f;
     float sourceRelativeHumidityIcePercent = 0.0f;
+
+    // Live-renderer wake state. Offline baseline construction leaves these at
+    // their neutral defaults, so accepted replay fixtures remain unchanged.
+    Vec3d vortexRightWorld {1.0, 0.0, 0.0};
+    float vortexSide = 0.0f;
+    float appliedVortexLateralM = 0.0f;
+    float appliedVortexVerticalM = 0.0f;
 };
 
 struct ContrailTimelineSample {

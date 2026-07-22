@@ -13,11 +13,13 @@ on:
       - "src/engine/SimulatorSnapshot.h"
       - "src/engine/ContrailSimulation.*"
       - "src/engine/LiveContrailEngine.*"
+      - "src/render/**"
       - "src/tools/ReplayRunnerMain.cpp"
       - "tests/ReplayTests.cpp"
       - "tests/ReplayRunnerTests.cpp"
       - "tests/ContrailSimulationTests.cpp"
       - "tests/LiveContrailDebugTests.cpp"
+      - "tests/ContrailRenderPlannerTests.cpp"
       - ".github/workflows/engine-v1-replay-runner.yml"
   pull_request:
     branches:
@@ -30,11 +32,13 @@ on:
       - "src/engine/SimulatorSnapshot.h"
       - "src/engine/ContrailSimulation.*"
       - "src/engine/LiveContrailEngine.*"
+      - "src/render/**"
       - "src/tools/ReplayRunnerMain.cpp"
       - "tests/ReplayTests.cpp"
       - "tests/ReplayRunnerTests.cpp"
       - "tests/ContrailSimulationTests.cpp"
       - "tests/LiveContrailDebugTests.cpp"
+      - "tests/ContrailRenderPlannerTests.cpp"
       - ".github/workflows/engine-v1-replay-runner.yml"
 
 permissions:
@@ -69,7 +73,7 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path build-logs | Out-Null
-          & cmake --build build-replay-runner --config Release --target FFAtmoReplayRunner ffatmo_core_tests ffatmo_acf_tests ffatmo_replay_tests ffatmo_replay_runner_tests ffatmo_contrail_tests ffatmo_live_contrail_debug_tests *> build-logs/build.txt
+          & cmake --build build-replay-runner --config Release --target FFAtmoReplayRunner ffatmo_core_tests ffatmo_acf_tests ffatmo_replay_tests ffatmo_replay_runner_tests ffatmo_contrail_tests ffatmo_live_contrail_debug_tests ffatmo_contrail_render_planner_tests *> build-logs/build.txt
           $buildExit = $LASTEXITCODE
           if ($buildExit -ne 0) { exit $buildExit }
           & ctest --test-dir build-replay-runner -C Release --output-on-failure *> build-logs/tests.txt

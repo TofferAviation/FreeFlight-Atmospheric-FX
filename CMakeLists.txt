@@ -13,6 +13,7 @@ option(FFATMO_BUILD_IMGUI_PANEL "Compile the six-page ImGui panel source" OFF)
 option(FFATMO_BUILD_COMPANION "Build the native Windows companion application" ON)
 option(FFATMO_BUILD_GEOMETRY_DEBUG "Build the standalone ACF geometry-debug plugin" OFF)
 option(FFATMO_BUILD_RECORDER_DEBUG "Build the standalone simulator snapshot recorder" OFF)
+option(FFATMO_BUILD_REPLAY_RUNNER "Build the offline deterministic replay runner" ON)
 
 set(XPLANE_SDK "" CACHE PATH "Path to the extracted X-Plane SDK folder")
 set(IMGUI_DIR "" CACHE PATH "Path to Dear ImGui (contains imgui.h)")
@@ -26,6 +27,7 @@ add_library(ffatmo_core STATIC
     src/Settings.cpp
     src/acf/AcfGeometry.cpp
     src/diagnostics/ReplayFile.cpp
+    src/diagnostics/ReplayRunner.cpp
 )
 target_include_directories(ffatmo_core PUBLIC src)
 target_link_libraries(ffatmo_core PUBLIC Threads::Threads)
@@ -35,6 +37,24 @@ if(MSVC)
     target_compile_options(ffatmo_core PRIVATE /W4 /permissive-)
 else()
     target_compile_options(ffatmo_core PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
+if(FFATMO_BUILD_REPLAY_RUNNER)
+    add_executable(FFAtmoReplayRunner src/tools/ReplayRunnerMain.cpp)
+    target_link_libraries(FFAtmoReplayRunner PRIVATE ffatmo_core)
+    if(MSVC)
+        target_compile_options(FFAtmoReplayRunner PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(FFAtmoReplayRunner PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    set_target_properties(FFAtmoReplayRunner PROPERTIES
+        OUTPUT_NAME "FFAtmoReplayRunner"
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/package/FFAtmoReplayRunner"
+        RUNTIME_OUTPUT_DIRECTORY_DEBUG "${CMAKE_CURRENT_SOURCE_DIR}/package/FFAtmoReplayRunner"
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_CURRENT_SOURCE_DIR}/package/FFAtmoReplayRunner"
+        RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO "${CMAKE_CURRENT_SOURCE_DIR}/package/FFAtmoReplayRunner"
+        RUNTIME_OUTPUT_DIRECTORY_MINSIZEREL "${CMAKE_CURRENT_SOURCE_DIR}/package/FFAtmoReplayRunner"
+    )
 endif()
 
 if(FFATMO_BUILD_COMPANION AND WIN32)
@@ -95,6 +115,10 @@ if(FFATMO_BUILD_TESTS)
     add_executable(ffatmo_replay_tests tests/ReplayTests.cpp)
     target_link_libraries(ffatmo_replay_tests PRIVATE ffatmo_core)
     add_test(NAME ffatmo_replay_tests COMMAND ffatmo_replay_tests)
+
+    add_executable(ffatmo_replay_runner_tests tests/ReplayRunnerTests.cpp)
+    target_link_libraries(ffatmo_replay_runner_tests PRIVATE ffatmo_core)
+    add_test(NAME ffatmo_replay_runner_tests COMMAND ffatmo_replay_runner_tests)
 endif()
 
 if(FFATMO_BUILD_IMGUI_PANEL)

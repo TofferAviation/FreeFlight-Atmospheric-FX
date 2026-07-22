@@ -126,23 +126,44 @@ Vec3d rotateBodyOffsetToEnu(const Vec3d& body,
     const double cosHeading = std::cos(heading);
     const double sinHeading = std::sin(heading);
 
-    // OBJ/ACF body axes are X right, Y up, Z aft. Apply positive X-Plane
-    // roll (right wing down), pitch (nose up), and clockwise true heading.
     const double rollX = cosRoll * body.x + sinRoll * body.y;
     const double rollY = -sinRoll * body.x + cosRoll * body.y;
     const double rollZ = body.z;
-
     const double pitchX = rollX;
     const double pitchY = cosPitch * rollY - sinPitch * rollZ;
     const double pitchZ = sinPitch * rollY + cosPitch * rollZ;
-
     const double localX = cosHeading * pitchX - sinHeading * pitchZ;
     const double localY = pitchY;
     const double localZ = sinHeading * pitchX + cosHeading * pitchZ;
-
-    // X-Plane local coordinates are east/up/south. Engine-world coordinates
-    // are east/up/north, hence the sign change on local Z.
     return {localX, localY, -localZ};
+}
+
+void applyWakeRollup(ContrailParcel& parcel) {
+    if (std::abs(parcel.vortexSide) < 0.5f) return;
+
+    const float age = parcel.ageSeconds;
+    const float capture = smoothstep(1.5f, 16.0f, age);
+    const float decay = std::exp(-age / 58.0f);
+    const float phase = age * 0.44f +
+        (parcel.vortexSide > 0.0f ? static_cast<float>(kPi) : 0.0f);
+
+    // Move both engine trails inward while adding a damped counter-rotating
+    // orbit around the wake core. Applied deltas make this independent of frame
+    // rate and keep each parcel deterministic.
+    const float desiredLateral =
+        -parcel.vortexSide * 2.8f * capture +
+        parcel.vortexSide * 1.35f * std::sin(phase) * capture * decay;
+    const float desiredVertical =
+        -2.25f * capture +
+        1.10f * std::cos(phase) * capture * decay;
+
+    const float lateralDelta = desiredLateral - parcel.appliedVortexLateralM;
+    const float verticalDelta = desiredVertical - parcel.appliedVortexVerticalM;
+    parcel.worldPositionM.x += parcel.vortexRightWorld.x * lateralDelta;
+    parcel.worldPositionM.y += parcel.vortexRightWorld.y * lateralDelta + verticalDelta;
+    parcel.worldPositionM.z += parcel.vortexRightWorld.z * lateralDelta;
+    parcel.appliedVortexLateralM = desiredLateral;
+    parcel.appliedVortexVerticalM = desiredVertical;
 }
 
 void hashBytes(std::uint64_t& hash, const void* data, std::size_t size) {
@@ -304,6 +325,13 @@ ContrailTimelineSample LiveContrailEngine::step(
                     continue;
                 }
 
+                Vec3d bodyOffset;
+                if (engineIndex < engineExhaustBodyOffsets_.size()) {
+                    bodyOffset = engineExhaustBodyOffsets_[engineIndex];
+                } else {
+                    bodyOffset.x = fallbackEngineLateralOffsetM(engineIndex, engineCount);
+                }
+
                 ContrailParcel parcel;
                 parcel.id = nextParcelId_++;
                 parcel.engineIndex = engineIndex;
@@ -313,6 +341,13 @@ ContrailTimelineSample LiveContrailEngine::step(
                 parcel.sourceTemperatureK = normalized.temperatureK;
                 parcel.sourceRelativeHumidityIcePercent =
                     normalized.relativeHumidityIcePercent;
+                parcel.vortexRightWorld = rotateBodyOffsetToEnu(
+                    {1.0, 0.0, 0.0},
+                    snapshot.headingDegTrue,
+                    snapshot.pitchDeg,
+                    snapshot.rollDeg);
+                parcel.vortexSide = bodyOffset.x < -0.05 ? -1.0f :
+                                    (bodyOffset.x > 0.05 ? 1.0f : 0.0f);
 
                 const float fuelFlowAssist = clamp01(
                     snapshot.engines[engineIndex].fuelFlowKgps / 1.5f);
@@ -352,6 +387,7 @@ ContrailTimelineSample LiveContrailEngine::step(
             const float wakeDescent = settings_.initialWakeDescentMps *
                 std::exp(-parcel.ageSeconds / 28.0f);
             parcel.worldPositionM.y -= wakeDescent * deltaSeconds;
+            applyWakeRollup(parcel);
 
             const float ageSpread = clamp01(parcel.ageSeconds / 90.0f);
             parcel.radiusM += (settings_.baseSpreadRateMps +

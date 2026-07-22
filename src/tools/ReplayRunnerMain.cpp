@@ -1,5 +1,6 @@
 #include "diagnostics/ReplayFile.h"
 #include "diagnostics/ReplayRunner.h"
+#include "engine/ContrailSimulation.h"
 
 #include <filesystem>
 #include <iostream>
@@ -7,15 +8,15 @@
 
 namespace {
 
-constexpr const char* kReplayRunnerBuild = "engine-v1-replay-runner-v1";
+constexpr const char* kReplayRunnerBuild = "engine-v1-replay-runner-v2";
 
 void printUsage() {
     std::cout << "FFAtmo Offline Replay Runner (" << kReplayRunnerBuild << ")\n\n"
               << "Usage:\n"
               << "  FFAtmoReplayRunner <recording.ffar> [--output <directory>] [--no-csv]\n\n"
-              << "The runner validates the replay, normalizes aircraft/environment state,\n"
-              << "detects X-Plane local-origin rebases, freezes physics during pause/replay,\n"
-              << "and writes a deterministic summary and optional CSV.\n"
+              << "The runner validates and normalizes the replay, freezes physics during\n"
+              << "pause/replay, survives X-Plane local-origin rebases, and executes the\n"
+              << "first deterministic contrail formation and dry-air decay simulation.\n"
               << "No X-Plane installation is required to run this tool.\n";
 }
 
@@ -78,37 +79,71 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    const auto result = ffatmo::diagnostics::runReplayAnalysis(replay);
+    const auto normalized = ffatmo::diagnostics::runReplayAnalysis(replay);
+    if (!normalized.summary.ok) {
+        std::cerr << "ERROR: replay normalization failed: "
+                  << normalized.summary.error << '\n';
+        return 1;
+    }
+
+    const auto contrails = ffatmo::engine::simulateContrails(replay, normalized);
+    if (!contrails.summary.ok) {
+        std::cerr << "ERROR: contrail simulation failed: "
+                  << contrails.summary.error << '\n';
+        return 1;
+    }
+
     const std::string stem = replayPath.stem().string();
-    const auto summaryPath = outputDirectory / (stem + "-runner-summary.txt");
-    const auto csvPath = outputDirectory / (stem + "-normalized.csv");
+    const auto normalizedSummaryPath = outputDirectory / (stem + "-runner-summary.txt");
+    const auto normalizedCsvPath = outputDirectory / (stem + "-normalized.csv");
+    const auto contrailSummaryPath = outputDirectory / (stem + "-contrail-summary.txt");
+    const auto contrailCsvPath = outputDirectory / (stem + "-contrail-timeline.csv");
 
     std::string error;
-    if (!ffatmo::diagnostics::writeReplayRunnerSummary(result, replay.metadata, summaryPath, &error)) {
+    if (!ffatmo::diagnostics::writeReplayRunnerSummary(
+            normalized, replay.metadata, normalizedSummaryPath, &error)) {
         std::cerr << "ERROR: " << error << '\n';
         return 1;
     }
-    if (writeCsv && !ffatmo::diagnostics::writeNormalizedReplayCsv(result, csvPath, &error)) {
+    if (!ffatmo::engine::writeContrailSimulationSummary(
+            contrails, replay.metadata, contrailSummaryPath, &error)) {
+        std::cerr << "ERROR: " << error << '\n';
+        return 1;
+    }
+    if (writeCsv && !ffatmo::diagnostics::writeNormalizedReplayCsv(
+            normalized, normalizedCsvPath, &error)) {
+        std::cerr << "ERROR: " << error << '\n';
+        return 1;
+    }
+    if (writeCsv && !ffatmo::engine::writeContrailTimelineCsv(
+            contrails, contrailCsvPath, &error)) {
         std::cerr << "ERROR: " << error << '\n';
         return 1;
     }
 
-    const auto& summary = result.summary;
-    std::cout << "FFAtmo replay analysis " << (summary.ok ? "completed" : "failed") << '\n'
+    const auto& replaySummary = normalized.summary;
+    const auto& contrailSummary = contrails.summary;
+    std::cout << "FFAtmo replay and contrail analysis completed\n"
               << "Build: " << kReplayRunnerBuild << '\n'
               << "Aircraft: " << replay.metadata.aircraftName
               << " (" << replay.metadata.aircraftIcao << ")\n"
-              << "Snapshots: " << summary.inputSnapshotCount << '\n'
-              << "Physics time: " << summary.integratedPhysicsTimeSeconds << " s\n"
-              << "Pause samples: " << summary.pausedSampleCount << '\n'
-              << "Replay samples: " << summary.replaySampleCount << '\n'
-              << "Origin rebases: " << summary.localOriginRebaseCount << '\n'
-              << "Deterministic hash: 0x" << std::hex << summary.deterministicHash << std::dec << '\n'
-              << "Summary: " << summaryPath.string() << '\n';
-    if (writeCsv) std::cout << "CSV: " << csvPath.string() << '\n';
-    if (!summary.ok) {
-        std::cerr << "ERROR: " << summary.error << '\n';
-        return 1;
+              << "Snapshots: " << replaySummary.inputSnapshotCount << '\n'
+              << "Physics time: " << replaySummary.integratedPhysicsTimeSeconds << " s\n"
+              << "Origin rebases: " << replaySummary.localOriginRebaseCount << '\n'
+              << "Normalized hash: 0x" << std::hex
+              << replaySummary.deterministicHash << std::dec << '\n'
+              << "Contrail parcels emitted: " << contrailSummary.emittedParcelCount << '\n'
+              << "Contrail parcels expired: " << contrailSummary.expiredParcelCount << '\n'
+              << "Peak active parcels: " << contrailSummary.peakActiveParcelCount << '\n'
+              << "Maximum visible length: "
+              << contrailSummary.maximumVisibleTrailLengthM << " m\n"
+              << "Contrail hash: 0x" << std::hex
+              << contrailSummary.deterministicHash << std::dec << '\n'
+              << "Replay summary: " << normalizedSummaryPath.string() << '\n'
+              << "Contrail summary: " << contrailSummaryPath.string() << '\n';
+    if (writeCsv) {
+        std::cout << "Normalized CSV: " << normalizedCsvPath.string() << '\n'
+                  << "Contrail timeline CSV: " << contrailCsvPath.string() << '\n';
     }
     return 0;
 }

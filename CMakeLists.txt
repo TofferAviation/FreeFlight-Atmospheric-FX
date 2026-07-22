@@ -28,6 +28,7 @@ add_library(ffatmo_core STATIC
     src/acf/AcfGeometry.cpp
     src/diagnostics/ReplayFile.cpp
     src/diagnostics/ReplayRunner.cpp
+    src/engine/ContrailSimulation.cpp
 )
 target_include_directories(ffatmo_core PUBLIC src)
 target_link_libraries(ffatmo_core PUBLIC Threads::Threads)
@@ -119,6 +120,10 @@ if(FFATMO_BUILD_TESTS)
     add_executable(ffatmo_replay_runner_tests tests/ReplayRunnerTests.cpp)
     target_link_libraries(ffatmo_replay_runner_tests PRIVATE ffatmo_core)
     add_test(NAME ffatmo_replay_runner_tests COMMAND ffatmo_replay_runner_tests)
+
+    add_executable(ffatmo_contrail_tests tests/ContrailSimulationTests.cpp)
+    target_link_libraries(ffatmo_contrail_tests PRIVATE ffatmo_core)
+    add_test(NAME ffatmo_contrail_tests COMMAND ffatmo_contrail_tests)
 endif()
 
 if(FFATMO_BUILD_IMGUI_PANEL)

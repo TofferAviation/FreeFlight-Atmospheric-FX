@@ -4,6 +4,7 @@
 #include "diagnostics/LiveSnapshotNormalizer.h"
 #include "engine/LiveContrailEngine.h"
 #include "host/XPlaneSnapshotSource.h"
+#include "render/ContrailRenderPlanner.h"
 
 #include "XPLMDataAccess.h"
 #include "XPLMDefs.h"
@@ -15,6 +16,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -29,7 +31,7 @@ namespace ffatmo {
 namespace {
 
 constexpr double kPi = 3.14159265358979323846;
-constexpr std::size_t kMaximumRenderedParcels = 6000;
+constexpr std::size_t kMaximumRenderInputParcels = 6000;
 constexpr float kPreviewMinimumAglM = 120.0f;
 constexpr float kPreviewMinimumTrueAirspeedMps = 65.0f;
 
@@ -45,6 +47,8 @@ public:
         engine::ContrailSimulationSettings settings;
         settings.maximumActiveParcels = 12000;
         liveEngine_.setSettings(settings);
+        renderPlannerSettings_.visibleCapacity = ContrailWorldRenderer::kVisibleCapacity;
+        renderPlannerSettings_.maximumSamplesPerSegment = 16;
     }
 
     bool start() {
@@ -52,7 +56,7 @@ public:
         reportPath_ = pluginRoot_ / "reports" / "contrail_visual_debug.txt";
         profileService_ = std::make_unique<acf::AcfProfileService>();
         createCommandsAndMenu();
-        log("Started. World-object renderer v2 uses an airborne preview gate.\n");
+        log("Started. Contrail Renderer v4 uses deterministic curved render planning and eight neutral-white assets.\n");
         return true;
     }
 
@@ -66,7 +70,7 @@ public:
             return false;
         }
         if (!worldRenderer_.start(pluginRoot_ / "assets")) {
-            log("Could not start the world-space contrail renderer. Check the assets folder.\n");
+            log("Could not start Renderer v4. Check the eight assets in the assets folder.\n");
             overlay_.stop();
             return false;
         }
@@ -175,6 +179,9 @@ private:
         latestSnapshot_ = {};
         latestNormalized_ = {};
         latestTimeline_ = {};
+        latestRenderPlan_ = {};
+        latestPlannerTimeMs_ = 0.0;
+        maximumPlannerTimeMs_ = 0.0;
         previewGateOpen_ = false;
         worldRenderer_.update({});
         overlay_.setFrame({}, {}, {});
@@ -188,6 +195,7 @@ private:
         liveEngine_.setEngineExhaustBodyOffsets({});
         normalizer_.reset();
         liveEngine_.reset();
+        latestRenderPlan_ = {};
         worldRenderer_.update({});
         sequenceNumber_ = 0;
 
@@ -233,13 +241,14 @@ private:
         }
         liveEngine_.setEngineExhaustBodyOffsets(engineExhaustBodyOffsets_);
         liveEngine_.reset();
+        latestRenderPlan_ = {};
         worldRenderer_.update({});
         geometryReady_ = true;
         geometryStatus_ = "ACF EXHAUSTS: " +
             std::to_string(engineExhaustBodyOffsets_.size());
         log("Live exhaust geometry ready for " + result->profile.aircraftName +
             ": " + std::to_string(engineExhaustBodyOffsets_.size()) + " engines.\n");
-        XPLMSpeakString("FF Atmo world contrail geometry ready");
+        XPLMSpeakString("FF Atmo Renderer v4 geometry ready");
     }
 
     bool applyAtmosphereMode(engine::SimulatorSnapshot& snapshot,
@@ -289,35 +298,35 @@ private:
         return true;
     }
 
-    std::vector<ContrailDebugRenderParcel> buildRenderParcels(
+    std::vector<render::ContrailRenderInput> buildRenderInputs(
         const engine::SimulatorSnapshot& snapshot,
         const diagnostics::NormalizedReplaySample& normalized) const {
         const auto& parcels = liveEngine_.parcels();
-        const std::size_t start = parcels.size() > kMaximumRenderedParcels
-            ? parcels.size() - kMaximumRenderedParcels
+        const std::size_t start = parcels.size() > kMaximumRenderInputParcels
+            ? parcels.size() - kMaximumRenderInputParcels
             : 0;
-        std::vector<ContrailDebugRenderParcel> render;
-        render.reserve(parcels.size() - start);
+        std::vector<render::ContrailRenderInput> inputs;
+        inputs.reserve(parcels.size() - start);
         for (std::size_t index = start; index < parcels.size(); ++index) {
             const auto& parcel = parcels[index];
             const double deltaEast = parcel.worldPositionM.x - normalized.worldEastM;
             const double deltaUp = parcel.worldPositionM.y - normalized.worldUpM;
             const double deltaNorth = parcel.worldPositionM.z - normalized.worldNorthM;
-            ContrailDebugRenderParcel item;
-            item.parcelId = parcel.id;
+            render::ContrailRenderInput item;
+            item.sourceParcelId = parcel.id;
+            item.engineIndex = parcel.engineIndex;
             item.localPositionM = {
                 snapshot.localPositionM.x + deltaEast,
                 snapshot.localPositionM.y + deltaUp,
                 snapshot.localPositionM.z - deltaNorth
             };
-            item.engineIndex = parcel.engineIndex;
-            item.radiusM = parcel.radiusM;
+            item.physicsRadiusM = parcel.radiusM;
             item.opticalDepth = parcel.opticalDepth;
             item.normalizedIceMass = parcel.normalizedIceMass;
             item.ageSeconds = parcel.ageSeconds;
-            render.push_back(item);
+            inputs.push_back(item);
         }
-        return render;
+        return inputs;
     }
 
     std::vector<ContrailDebugRenderSource> buildRenderSources(
@@ -349,7 +358,7 @@ private:
         status.aircraftIcao = snapshotSource_.aircraftIcao();
         status.mode = modeName(atmosphereMode_);
         status.geometryStatus = geometryStatus_;
-        status.rendererStatus = worldRenderer_.ready() ? "WORLD OBJECTS READY" : "LOADING OBJECTS";
+        status.rendererStatus = worldRenderer_.ready() ? "WORLD V4 READY" : "LOADING V4 ASSETS";
         status.activeParcels = liveEngine_.parcels().size();
         status.emittedParcels = liveEngine_.summary().emittedParcelCount;
         status.expiredParcels = liveEngine_.summary().expiredParcelCount;
@@ -376,7 +385,8 @@ private:
         }
 
         const auto& summary = liveEngine_.summary();
-        stream << "FFAtmo World Contrail Visual Debug Report v2\n"
+        const auto& planner = latestRenderPlan_.statistics;
+        stream << "FFAtmo World Contrail Visual Debug Report v4\n"
                << "status=" << (summary.ok ? "OK" : "ERROR") << '\n'
                << "error=" << summary.error << '\n'
                << "aircraft_name=" << snapshotSource_.aircraftName() << '\n'
@@ -391,9 +401,11 @@ private:
                << "world_renderer_ready=" << (worldRenderer_.ready() ? 1 : 0) << '\n'
                << "world_renderer_loaded_objects=" << worldRenderer_.loadedObjectCount() << '\n'
                << "world_renderer_visible_instances=" << worldRenderer_.visibleInstanceCount() << '\n'
-               << "world_renderer_capacity="
-               << ContrailWorldRenderer::kOpacityBucketCount *
-                  ContrailWorldRenderer::kInstancesPerBucket << '\n'
+               << "world_renderer_capacity=" << ContrailWorldRenderer::kVisibleCapacity << '\n'
+               << "world_renderer_pooled_instances="
+               << ContrailWorldRenderer::kAssetCount * ContrailWorldRenderer::kInstancesPerAsset << '\n'
+               << "world_renderer_pool_capacity_drop_count="
+               << worldRenderer_.poolCapacityDropCount() << '\n'
                << "simulation_enabled=" << (simulationEnabled_ ? 1 : 0) << '\n'
                << "visuals_enabled=" << (visualEnabled_ ? 1 : 0) << '\n'
                << "input_sample_count=" << summary.inputSampleCount << '\n'
@@ -403,6 +415,14 @@ private:
                << "peak_active_parcel_count=" << summary.peakActiveParcelCount << '\n'
                << "capacity_drop_count=" << summary.capacityDropCount << '\n'
                << "local_origin_rebase_count=" << normalizer_.localOriginRebaseCount() << '\n'
+               << "render_planner_input_count=" << planner.inputParcelCount << '\n'
+               << "render_planner_valid_count=" << planner.validParcelCount << '\n'
+               << "render_planner_generated_count=" << planner.generatedSampleCount << '\n'
+               << "render_planner_selected_count=" << planner.selectedSampleCount << '\n'
+               << "render_planner_selected_core_count=" << planner.selectedCoreCount << '\n'
+               << "render_planner_selected_halo_count=" << planner.selectedHaloCount << '\n'
+               << "render_planner_stream_break_count=" << planner.streamBreakCount << '\n'
+               << "render_planner_capacity_rejected_count=" << planner.capacityRejectedCount << '\n'
                << std::fixed << std::setprecision(6)
                << "integrated_physics_time_seconds="
                << normalizer_.integratedPhysicsTimeSeconds() << '\n'
@@ -413,12 +433,21 @@ private:
                << "maximum_visible_trail_length_m="
                << summary.maximumVisibleTrailLengthM << '\n'
                << "maximum_parcel_age_seconds=" << summary.maximumParcelAgeSeconds << '\n'
+               << "render_planner_latest_time_ms=" << latestPlannerTimeMs_ << '\n'
+               << "render_planner_maximum_time_ms=" << maximumPlannerTimeMs_ << '\n'
+               << "render_planner_maximum_spacing_m=" << planner.maximumSelectedSpacingM << '\n'
+               << "render_planner_maximum_curve_deviation_m="
+               << planner.maximumCurveDeviationM << '\n'
+               << "maximum_billboard_error_deg="
+               << worldRenderer_.maximumBillboardErrorDeg() << '\n'
                << std::hex << std::setfill('0')
+               << "render_planner_hash=0x" << std::setw(16)
+               << planner.deterministicHash << '\n'
                << "deterministic_hash=0x" << std::setw(16)
                << summary.deterministicHash << '\n';
 
-        log("World visual-debug report written to: " + reportPath_.string() + "\n");
-        XPLMSpeakString("FF Atmo world contrail report exported");
+        log("Renderer v4 report written to: " + reportPath_.string() + "\n");
+        XPLMSpeakString("FF Atmo Renderer v4 report exported");
     }
 
     void cycleAtmosphereMode() {
@@ -434,6 +463,7 @@ private:
                 break;
         }
         liveEngine_.reset();
+        latestRenderPlan_ = {};
         worldRenderer_.update({});
         log(std::string("Atmosphere mode: ") + modeName(atmosphereMode_) + "\n");
         XPLMSpeakString(modeName(atmosphereMode_));
@@ -473,8 +503,15 @@ private:
             latestTimeline_.activeParcelCount = liveEngine_.parcels().size();
         }
 
-        auto renderParcels = buildRenderParcels(latestSnapshot_, simulationNormalized);
-        worldRenderer_.update(renderParcels);
+        const auto inputs = buildRenderInputs(latestSnapshot_, simulationNormalized);
+        const auto plannerStart = std::chrono::steady_clock::now();
+        latestRenderPlan_ = render::planContrailRenderSamples(inputs, renderPlannerSettings_);
+        const auto plannerEnd = std::chrono::steady_clock::now();
+        latestPlannerTimeMs_ = std::chrono::duration<double, std::milli>(
+            plannerEnd - plannerStart).count();
+        maximumPlannerTimeMs_ = std::max(maximumPlannerTimeMs_, latestPlannerTimeMs_);
+
+        worldRenderer_.update(latestRenderPlan_.samples);
         overlay_.setFrame({}, buildRenderSources(latestSnapshot_), buildOverlayStatus());
         return -1.0f;
     }
@@ -495,7 +532,7 @@ private:
             self->visualEnabled_ = !self->visualEnabled_;
             self->overlay_.setEnabled(self->visualEnabled_);
             self->worldRenderer_.setEnabled(self->visualEnabled_);
-            log(std::string("World contrail visuals ") +
+            log(std::string("Renderer v4 visuals ") +
                 (self->visualEnabled_ ? "enabled.\n" : "disabled.\n"));
         } else if (command == self->toggleSimulationCommand_) {
             self->simulationEnabled_ = !self->simulationEnabled_;
@@ -505,6 +542,7 @@ private:
             self->cycleAtmosphereMode();
         } else if (command == self->resetTrailCommand_) {
             self->liveEngine_.reset();
+            self->latestRenderPlan_ = {};
             self->worldRenderer_.update({});
             log("Live contrail trail reset.\n");
         } else if (command == self->reloadGeometryCommand_) {
@@ -518,7 +556,7 @@ private:
     void createCommandsAndMenu() {
         toggleOverlayCommand_ = XPLMCreateCommand(
             "ffatmo_contrail_debug/toggle_overlay",
-            "Toggle FFAtmo world contrail visuals and status overlay");
+            "Toggle FFAtmo Renderer v4 visuals and status overlay");
         toggleSimulationCommand_ = XPLMCreateCommand(
             "ffatmo_contrail_debug/toggle_simulation",
             "Enable or disable live contrail physics");
@@ -554,7 +592,7 @@ private:
             nullptr,
             nullptr);
         XPLMAppendMenuItemWithCommand(
-            menu_, "World Visuals + Status: ON / OFF", toggleOverlayCommand_);
+            menu_, "Renderer v4 Visuals + Status: ON / OFF", toggleOverlayCommand_);
         XPLMAppendMenuItemWithCommand(
             menu_, "Simulation: ON / OFF", toggleSimulationCommand_);
         XPLMAppendMenuItemWithCommand(
@@ -592,6 +630,8 @@ private:
     host::XPlaneSnapshotSource snapshotSource_;
     diagnostics::LiveSnapshotNormalizer normalizer_;
     engine::LiveContrailEngine liveEngine_;
+    render::ContrailRenderPlannerSettings renderPlannerSettings_;
+    render::ContrailRenderPlan latestRenderPlan_;
     ContrailWorldRenderer worldRenderer_;
     ContrailDebugOverlay overlay_;
 
@@ -615,6 +655,8 @@ private:
     bool aircraftDirty_ = false;
     bool geometryReady_ = false;
     bool previewGateOpen_ = false;
+    double latestPlannerTimeMs_ = 0.0;
+    double maximumPlannerTimeMs_ = 0.0;
     std::uint64_t sequenceNumber_ = 0;
     std::uint64_t expectedGeneration_ = 0;
     std::uint64_t deliveredGeneration_ = 0;
@@ -634,7 +676,7 @@ PLUGIN_API int XPluginStart(char* outName,
         outDescription,
         256,
         "%s",
-        "Live contrail physics with pooled depth-aware X-Plane world-object rendering");
+        "Contrail Renderer v4 with deterministic curved planning and camera-facing world assets");
     return ffatmo::gRuntime.start() ? 1 : 0;
 }
 

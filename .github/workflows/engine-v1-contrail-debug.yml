@@ -60,7 +60,7 @@ jobs:
             -OutFile $archive
           Expand-Archive -LiteralPath $archive -DestinationPath $destination -Force
           $header = Get-ChildItem $destination -Recurse -Filter "XPLMPlugin.h" |
-            Where-Object { $_.FullName -match '[\/]CHeaders[\/]XPLM[\/]XPLMPlugin\.h$' } |
+            Where-Object { $_.FullName.Replace('\', '/') -like '*/CHeaders/XPLM/XPLMPlugin.h' } |
             Select-Object -First 1
           if (-not $header) { throw "The X-Plane SDK archive did not contain XPLMPlugin.h" }
           $sdkRoot = Split-Path (Split-Path (Split-Path $header.FullName -Parent) -Parent) -Parent

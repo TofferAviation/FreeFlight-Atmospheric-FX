@@ -1,0 +1,153 @@
+name: Build Engine v1 Contrail Visual Debug
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - engine/v1
+    paths:
+      - "CMakeLists.txt"
+      - "src/acf/**"
+      - "src/diagnostics/**"
+      - "src/engine/**"
+      - "src/host/**"
+      - "src/ContrailDebugPlugin.cpp"
+      - "src/ContrailDebugOverlay.*"
+      - "tests/LiveContrailDebugTests.cpp"
+      - ".github/workflows/engine-v1-contrail-debug.yml"
+  pull_request:
+    branches:
+      - engine/v1
+    paths:
+      - "CMakeLists.txt"
+      - "src/acf/**"
+      - "src/diagnostics/**"
+      - "src/engine/**"
+      - "src/host/**"
+      - "src/ContrailDebugPlugin.cpp"
+      - "src/ContrailDebugOverlay.*"
+      - "tests/LiveContrailDebugTests.cpp"
+      - ".github/workflows/engine-v1-contrail-debug.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ffatmo-engine-v1-contrail-debug-${{ github.event.pull_request.number || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out live contrail debug source
+        uses: actions/checkout@v4
+
+      - name: Fetch X-Plane Plugin SDK 4.3.0
+        id: xplane_sdk
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path third_party | Out-Null
+          $archive = Join-Path $pwd "third_party/XPSDK430.zip"
+          $destination = Join-Path $pwd "third_party/xplane-sdk"
+          Invoke-WebRequest `
+            -Uri "https://developer.x-plane.com/wp-content/plugins/code-sample-generation/sdk_zip_files/XPSDK430.zip" `
+            -OutFile $archive
+          Expand-Archive -LiteralPath $archive -DestinationPath $destination -Force
+          $header = Get-ChildItem $destination -Recurse -Filter "XPLMPlugin.h" |
+            Where-Object { $_.FullName -match '[\\/]CHeaders[\\/]XPLM[\\/]XPLMPlugin\.h$' } |
+            Select-Object -First 1
+          if (-not $header) { throw "The X-Plane SDK archive did not contain XPLMPlugin.h" }
+          $sdkRoot = Split-Path (Split-Path (Split-Path $header.FullName -Parent) -Parent) -Parent
+          if (-not (Test-Path (Join-Path $sdkRoot "Libraries/Win/XPLM_64.lib"))) {
+            throw "The X-Plane SDK Windows link library was not found"
+          }
+          "path=$sdkRoot" >> $env:GITHUB_OUTPUT
+
+      - name: Configure live contrail debug build
+        shell: pwsh
+        run: >-
+          cmake -S . -B build-contrail-debug -A x64
+          -DXPLANE_SDK="${{ steps.xplane_sdk.outputs.path }}"
+          -DFFATMO_BUILD_PLUGIN=OFF
+          -DFFATMO_BUILD_COMPANION=OFF
+          -DFFATMO_BUILD_IMGUI_PANEL=OFF
+          -DFFATMO_BUILD_GEOMETRY_DEBUG=OFF
+          -DFFATMO_BUILD_RECORDER_DEBUG=OFF
+          -DFFATMO_BUILD_CONTRAIL_DEBUG=ON
+          -DFFATMO_BUILD_REPLAY_RUNNER=OFF
+          -DFFATMO_BUILD_TESTS=ON
+          -DFFATMO_GIT_REVISION="${{ github.sha }}"
+
+      - name: Build plugin and full deterministic tests
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path build-logs | Out-Null
+          & cmake --build build-contrail-debug --config Release --target FFAtmoContrailDebug ffatmo_core_tests ffatmo_acf_tests ffatmo_replay_tests ffatmo_replay_runner_tests ffatmo_contrail_tests ffatmo_live_contrail_debug_tests *> build-logs/build.txt
+          $buildExit = $LASTEXITCODE
+          if ($buildExit -ne 0) { exit $buildExit }
+          & ctest --test-dir build-contrail-debug -C Release --output-on-failure *> build-logs/tests.txt
+          $testExit = $LASTEXITCODE
+          if ($testExit -ne 0) { exit $testExit }
+          $plugin = "package/FFAtmoContrailDebug/64/win.xpl"
+          if (-not (Test-Path $plugin)) { throw "Contrail visual-debug win.xpl was not produced" }
+          if ((Get-Item $plugin).Length -lt 100000) { throw "Contrail visual-debug win.xpl is unexpectedly small" }
+
+      - name: Upload build diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: FFAtmoContrailDebug-build-diagnostics
+          path: build-logs
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Assemble visual-debug package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path artifact/FFAtmoContrailDebug/64 | Out-Null
+          Copy-Item package/FFAtmoContrailDebug/64/win.xpl artifact/FFAtmoContrailDebug/64/win.xpl -Force
+          @'
+          FFAtmo Engine v1 Live Contrail Visual Debug
+
+          INSTALL
+          Copy the FFAtmoContrailDebug folder into:
+          X-Plane 12/Resources/plugins/
+
+          This installs separately from FFAtmo, FFAtmoEngineRecorder, and
+          FFAtmoEngineDebug.
+
+          FIRST VISUAL TEST
+          1. Load the Boeing 737-800NG and use an external camera.
+          2. The plugin starts in FORCED DRY PREVIEW mode so formation is visible
+             regardless of real weather or altitude.
+          3. Fly straight for at least 30 seconds with the overlay enabled.
+          4. Cyan crosses are the parsed ACF exhaust origins.
+          5. White/blue coach-mark parcels form behind each engine, spread, descend,
+             and fade in the dry preview atmosphere.
+          6. Open Plugins > FFAtmo Contrail Visual Debug to change modes, reset the
+             trail, or export the live report.
+
+          ATMOSPHERE MODES
+          - LIVE WEATHER: uses actual X-Plane temperature, pressure, humidity, engines.
+          - FORCED DRY PREVIEW: forms a young trail that should fully fade.
+          - FORCED PERSISTENT PREVIEW: ice-supersaturated test mode for long-lived trail.
+
+          SEND BACK
+          - side/rear-oblique screenshots showing the developing trail
+          - X-Plane 12/Log.txt
+          - FFAtmoContrailDebug/reports/contrail_visual_debug.txt
+
+          The renderer is a Vulkan-safe screen-space engineering visualizer, not the
+          final production particle renderer.
+          '@ | Set-Content artifact/FFAtmoContrailDebug/README_TESTING.txt -Encoding utf8
+          "git_revision=${{ github.sha }}" | Set-Content artifact/FFAtmoContrailDebug/BUILD_INFO.txt -Encoding utf8
+
+      - name: Upload live contrail visual debug plugin
+        uses: actions/upload-artifact@v4
+        with:
+          name: FFAtmoContrailDebug-win64
+          path: artifact/FFAtmoContrailDebug
+          if-no-files-found: error
+          retention-days: 14

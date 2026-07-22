@@ -14,6 +14,7 @@ on:
       - "tests/ReplayTests.cpp"
       - "tests/ReplayRunnerTests.cpp"
       - "tests/ContrailSimulationTests.cpp"
+      - "tests/LiveContrailDebugTests.cpp"
       - ".github/workflows/engine-v1-recorder.yml"
   pull_request:
     branches:
@@ -27,6 +28,7 @@ on:
       - "tests/ReplayTests.cpp"
       - "tests/ReplayRunnerTests.cpp"
       - "tests/ContrailSimulationTests.cpp"
+      - "tests/LiveContrailDebugTests.cpp"
       - ".github/workflows/engine-v1-recorder.yml"
 
 permissions:
@@ -82,7 +84,7 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path build-logs | Out-Null
-          & cmake --build build-recorder --config Release --target FFAtmoEngineRecorder ffatmo_core_tests ffatmo_acf_tests ffatmo_replay_tests ffatmo_replay_runner_tests ffatmo_contrail_tests *> build-logs/build.txt
+          & cmake --build build-recorder --config Release --target FFAtmoEngineRecorder ffatmo_core_tests ffatmo_acf_tests ffatmo_replay_tests ffatmo_replay_runner_tests ffatmo_contrail_tests ffatmo_live_contrail_debug_tests *> build-logs/build.txt
           $buildExit = $LASTEXITCODE
           if ($buildExit -ne 0) { exit $buildExit }
           & ctest --test-dir build-recorder -C Release --output-on-failure *> build-logs/tests.txt

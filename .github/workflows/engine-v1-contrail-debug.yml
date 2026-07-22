@@ -59,9 +59,25 @@ jobs:
           New-Item -ItemType Directory -Force -Path third_party | Out-Null
           $archive = Join-Path $pwd "third_party/XPSDK430.zip"
           $destination = Join-Path $pwd "third_party/xplane-sdk"
-          Invoke-WebRequest `
-            -Uri "https://developer.x-plane.com/wp-content/plugins/code-sample-generation/sdk_zip_files/XPSDK430.zip" `
-            -OutFile $archive
+          $downloaded = $false
+          for ($attempt = 1; $attempt -le 5; $attempt++) {
+            try {
+              if (Test-Path $archive) { Remove-Item $archive -Force }
+              Invoke-WebRequest `
+                -Uri "https://developer.x-plane.com/wp-content/plugins/code-sample-generation/sdk_zip_files/XPSDK430.zip" `
+                -OutFile $archive `
+                -Headers @{ "User-Agent" = "FFAtmo-GitHub-Actions" }
+              if ((Get-Item $archive).Length -lt 1000000) {
+                throw "Downloaded SDK archive is unexpectedly small"
+              }
+              $downloaded = $true
+              break
+            } catch {
+              if ($attempt -eq 5) { throw }
+              Start-Sleep -Seconds (8 * $attempt)
+            }
+          }
+          if (-not $downloaded) { throw "Could not download X-Plane SDK after retries" }
           Expand-Archive -LiteralPath $archive -DestinationPath $destination -Force
           $header = Get-ChildItem $destination -Recurse -Filter "XPLMPlugin.h" |
             Where-Object { $_.FullName.Replace('\', '/') -like '*/CHeaders/XPLM/XPLMPlugin.h' } |

@@ -1,6 +1,7 @@
 #pragma once
 
-#include "ContrailDebugOverlay.h"
+#include "render/BillboardMath.h"
+#include "render/ContrailRenderPlanner.h"
 
 #include "XPLMCamera.h"
 #include "XPLMDataAccess.h"
@@ -22,12 +23,15 @@ namespace ffatmo {
 class ContrailWorldRenderer {
 public:
     static constexpr std::size_t kOpacityBucketCount = 4;
-    static constexpr std::size_t kInstancesPerBucket = 256;
+    static constexpr std::size_t kTextureVariantCount = 2;
+    static constexpr std::size_t kAssetCount = kOpacityBucketCount * kTextureVariantCount;
+    static constexpr std::size_t kInstancesPerAsset = 192;
+    static constexpr std::size_t kVisibleCapacity = 1024;
 
     ContrailWorldRenderer() {
         for (std::size_t index = 0; index < loadContexts_.size(); ++index) {
             loadContexts_[index].owner = this;
-            loadContexts_[index].bucket = index;
+            loadContexts_[index].assetIndex = index;
         }
     }
 
@@ -40,10 +44,10 @@ public:
         assetDirectory_ = assetDirectory;
         loadedObjectCount_ = 0;
         visibleInstanceCount_ = 0;
+        poolCapacityDropCount_ = 0;
+        maximumBillboardErrorDeg_ = 0.0;
         enabled_ = true;
 
-        // XPLMInstance resolves custom animation datarefs while loading the OBJ,
-        // so this accessor must exist before XPLMLoadObjectAsync is called.
         scaleDataRef_ = XPLMRegisterDataAccessor(
             "ffatmo/contrail_debug/scale",
             xplmType_Float,
@@ -68,17 +72,22 @@ public:
         }
 
         running_ = true;
-        for (std::size_t bucket = 0; bucket < pools_.size(); ++bucket) {
-            const auto objectPath = assetDirectory_ /
-                ("contrail_puff_" + std::to_string(bucket) + ".obj");
-            if (!std::filesystem::exists(objectPath)) {
-                log("Missing asset: " + objectPath.string() + "\n");
-                stop();
-                return false;
+        for (std::size_t bucket = 0; bucket < kOpacityBucketCount; ++bucket) {
+            for (std::size_t variant = 0; variant < kTextureVariantCount; ++variant) {
+                const std::size_t assetIndex = bucket * kTextureVariantCount + variant;
+                const char variantName = variant == 0 ? 'a' : 'b';
+                const auto objectPath = assetDirectory_ /
+                    ("contrail_core_" + std::to_string(bucket) + "_" +
+                     std::string(1, variantName) + ".obj");
+                if (!std::filesystem::exists(objectPath)) {
+                    log("Missing v4 asset: " + objectPath.string() + "\n");
+                    stop();
+                    return false;
+                }
+                XPLMLoadObjectAsync(objectPath.string().c_str(),
+                                    objectLoadedCallback,
+                                    &loadContexts_[assetIndex]);
             }
-            XPLMLoadObjectAsync(objectPath.string().c_str(),
-                                objectLoadedCallback,
-                                &loadContexts_[bucket]);
         }
         return true;
     }
@@ -103,115 +112,100 @@ public:
         }
     }
 
-    void update(const std::vector<ContrailDebugRenderParcel>& parcels) {
+    void update(const std::vector<render::ContrailRenderSample>& samples) {
         if (!enabled_ || !ready()) {
             if (ready()) hideAll();
             return;
         }
 
-        XPLMCameraPosition_t camera {};
-        XPLMReadCameraPosition(&camera);
+        XPLMCameraPosition_t cameraRaw {};
+        XPLMReadCameraPosition(&cameraRaw);
+        const engine::Vec3d cameraPosition {
+            static_cast<double>(cameraRaw.x),
+            static_cast<double>(cameraRaw.y),
+            static_cast<double>(cameraRaw.z)
+        };
 
-        // Physics parcels are intentionally sparse. Build render-only samples between
-        // consecutive parcels from each engine so the trail reads as condensation rather
-        // than a string of separate balls. This does not alter deterministic physics.
-        std::vector<ContrailDebugRenderParcel> densified;
-        densified.reserve(parcels.size() * 5);
-        std::array<ContrailDebugRenderParcel, engine::kMaximumRecordedEngines> previous {};
-        std::array<bool, engine::kMaximumRecordedEngines> hasPrevious {};
+        struct VisibleSample {
+            const render::ContrailRenderSample* sample = nullptr;
+            double distanceSquared = 0.0;
+        };
 
-        for (const auto& parcel : parcels) {
-            if (!finiteParcel(parcel) ||
-                parcel.engineIndex >= engine::kMaximumRecordedEngines) {
+        std::vector<VisibleSample> visible;
+        visible.reserve(samples.size());
+        constexpr double maximumDistanceSquared = 120000.0 * 120000.0;
+        for (const auto& sample : samples) {
+            if (!finiteSample(sample) || sample.opacityStrength < 0.002f ||
+                sample.opacityBucket >= kOpacityBucketCount ||
+                sample.textureVariant >= kTextureVariantCount) {
                 continue;
             }
+            const double dx = cameraPosition.x - sample.localPositionM.x;
+            const double dy = cameraPosition.y - sample.localPositionM.y;
+            const double dz = cameraPosition.z - sample.localPositionM.z;
+            const double distanceSquared = dx * dx + dy * dy + dz * dz;
+            if (!std::isfinite(distanceSquared) || distanceSquared > maximumDistanceSquared) continue;
+            visible.push_back({&sample, distanceSquared});
+        }
 
-            const std::size_t engineIndex = static_cast<std::size_t>(parcel.engineIndex);
-            if (hasPrevious[engineIndex]) {
-                const auto& first = previous[engineIndex];
-                const double gapM = distance(first.localPositionM, parcel.localPositionM);
-                if (std::isfinite(gapM) && gapM > 4.0 && gapM < 250.0) {
-                    const int segmentCount = std::clamp(
-                        static_cast<int>(std::ceil(gapM / 18.0)), 1, 7);
-                    for (int segment = 1; segment < segmentCount; ++segment) {
-                        const float ratio = static_cast<float>(segment) /
-                                            static_cast<float>(segmentCount);
-                        ContrailDebugRenderParcel interpolated;
-                        interpolated.parcelId = parcel.parcelId * 8u +
-                                                static_cast<std::uint64_t>(segment);
-                        interpolated.engineIndex = parcel.engineIndex;
-                        interpolated.localPositionM = lerp(
-                            first.localPositionM, parcel.localPositionM, ratio);
-                        interpolated.radiusM = mix(first.radiusM, parcel.radiusM, ratio);
-                        interpolated.opticalDepth = mix(
-                            first.opticalDepth, parcel.opticalDepth, ratio);
-                        interpolated.normalizedIceMass = mix(
-                            first.normalizedIceMass, parcel.normalizedIceMass, ratio);
-                        interpolated.ageSeconds = mix(
-                            first.ageSeconds, parcel.ageSeconds, ratio);
-                        densified.push_back(interpolated);
-                    }
+        if (visible.size() > kVisibleCapacity) {
+            std::stable_sort(visible.begin(), visible.end(), [](const auto& a, const auto& b) {
+                if (a.sample->priority != b.sample->priority) {
+                    return a.sample->priority > b.sample->priority;
                 }
-            }
-
-            densified.push_back(parcel);
-            previous[engineIndex] = parcel;
-            hasPrevious[engineIndex] = true;
+                if (a.sample->ageSeconds != b.sample->ageSeconds) {
+                    return a.sample->ageSeconds < b.sample->ageSeconds;
+                }
+                return a.sample->renderId < b.sample->renderId;
+            });
+            visible.resize(kVisibleCapacity);
         }
 
-        std::vector<const ContrailDebugRenderParcel*> visible;
-        visible.reserve(densified.size());
-        for (const auto& parcel : densified) {
-            if (parcel.opticalDepth >= 0.010f) visible.push_back(&parcel);
-        }
-
-        constexpr std::size_t maximumVisible =
-            kOpacityBucketCount * kInstancesPerBucket;
-        std::array<std::vector<const ContrailDebugRenderParcel*>, kOpacityBucketCount> buckets;
-        const std::size_t selectedCount = std::min(visible.size(), maximumVisible);
-        for (std::size_t selected = 0; selected < selectedCount; ++selected) {
-            std::size_t sourceIndex = selected;
-            if (selectedCount > 1 && visible.size() > selectedCount) {
-                sourceIndex = static_cast<std::size_t>(std::llround(
-                    static_cast<double>(selected) *
-                    static_cast<double>(visible.size() - 1) /
-                    static_cast<double>(selectedCount - 1)));
-            }
-            const auto* parcel = visible[sourceIndex];
-            buckets[opacityBucket(*parcel)].push_back(parcel);
+        std::array<std::vector<VisibleSample>, kAssetCount> assigned;
+        for (const auto& item : visible) {
+            const std::size_t assetIndex =
+                static_cast<std::size_t>(item.sample->opacityBucket) * kTextureVariantCount +
+                static_cast<std::size_t>(item.sample->textureVariant);
+            assigned[assetIndex].push_back(item);
         }
 
         visibleInstanceCount_ = 0;
-        for (std::size_t bucket = 0; bucket < pools_.size(); ++bucket) {
-            auto& pool = pools_[bucket];
-            auto& assigned = buckets[bucket];
-            if (assigned.size() > pool.instances.size()) {
-                assigned.erase(assigned.begin(),
-                               assigned.begin() + static_cast<std::ptrdiff_t>(
-                                   assigned.size() - pool.instances.size()));
+        for (std::size_t assetIndex = 0; assetIndex < pools_.size(); ++assetIndex) {
+            auto& pool = pools_[assetIndex];
+            auto& bucketSamples = assigned[assetIndex];
+            if (bucketSamples.size() > pool.instances.size()) {
+                std::stable_sort(bucketSamples.begin(), bucketSamples.end(), [](const auto& a, const auto& b) {
+                    if (a.sample->priority != b.sample->priority) {
+                        return a.sample->priority > b.sample->priority;
+                    }
+                    return a.sample->renderId < b.sample->renderId;
+                });
+                poolCapacityDropCount_ += bucketSamples.size() - pool.instances.size();
+                bucketSamples.resize(pool.instances.size());
             }
 
-            std::size_t index = 0;
-            for (; index < assigned.size(); ++index) {
-                const auto& parcel = *assigned[index];
-                const float ageExpansion = 1.0f +
-                    0.12f * std::clamp(parcel.ageSeconds / 55.0f, 0.0f, 1.0f);
+            std::stable_sort(bucketSamples.begin(), bucketSamples.end(), [](const auto& a, const auto& b) {
+                if (a.distanceSquared != b.distanceSquared) {
+                    return a.distanceSquared > b.distanceSquared;
+                }
+                return a.sample->renderId < b.sample->renderId;
+            });
 
-                // The OBJ quad is wider than it is tall. Half-radius scaling keeps
-                // young engine-core condensation tight and prevents old parcels from
-                // becoming the giant opaque balls seen in renderer v2.
-                const float scaleM = std::clamp(
-                    parcel.radiusM * 0.42f * ageExpansion,
-                    0.34f,
-                    8.5f);
+            std::size_t instanceIndex = 0;
+            for (; instanceIndex < bucketSamples.size(); ++instanceIndex) {
+                const auto& sample = *bucketSamples[instanceIndex].sample;
                 const float textureRollDeg = static_cast<float>(
-                    (parcel.parcelId * 47u + parcel.engineIndex * 83u) % 360u);
-                setInstance(pool.instances[index], parcel, scaleM, textureRollDeg, camera);
+                    (sample.renderId * 47u + sample.engineIndex * 83u) % 360u);
+                setInstance(pool.instances[instanceIndex],
+                            sample,
+                            textureRollDeg,
+                            cameraRaw,
+                            cameraPosition);
                 ++visibleInstanceCount_;
             }
-            for (; index < pool.instances.size(); ++index) {
-                hideInstance(pool.instances[index],
-                             index + bucket * kInstancesPerBucket);
+            for (; instanceIndex < pool.instances.size(); ++instanceIndex) {
+                hideInstance(pool.instances[instanceIndex],
+                             instanceIndex + assetIndex * kInstancesPerAsset);
             }
         }
     }
@@ -233,6 +227,8 @@ public:
 
     std::size_t visibleInstanceCount() const { return visibleInstanceCount_; }
     std::size_t loadedObjectCount() const { return loadedObjectCount_; }
+    std::uint64_t poolCapacityDropCount() const { return poolCapacityDropCount_; }
+    double maximumBillboardErrorDeg() const { return maximumBillboardErrorDeg_; }
 
 private:
     struct Pool {
@@ -242,10 +238,8 @@ private:
 
     struct LoadContext {
         ContrailWorldRenderer* owner = nullptr;
-        std::size_t bucket = 0;
+        std::size_t assetIndex = 0;
     };
-
-    static constexpr double kRadiansToDegrees = 57.2957795130823208768;
 
     static void log(const std::string& message) {
         XPLMDebugString(("[FFAtmo Contrail World Renderer] " + message).c_str());
@@ -255,34 +249,13 @@ private:
         return 1.0f;
     }
 
-    static bool finiteParcel(const ContrailDebugRenderParcel& parcel) {
-        return std::isfinite(parcel.localPositionM.x) &&
-               std::isfinite(parcel.localPositionM.y) &&
-               std::isfinite(parcel.localPositionM.z) &&
-               std::isfinite(parcel.radiusM) &&
-               std::isfinite(parcel.opticalDepth) &&
-               std::isfinite(parcel.ageSeconds);
-    }
-
-    static double distance(const engine::Vec3d& first, const engine::Vec3d& second) {
-        const double x = second.x - first.x;
-        const double y = second.y - first.y;
-        const double z = second.z - first.z;
-        return std::sqrt(x * x + y * y + z * z);
-    }
-
-    static engine::Vec3d lerp(const engine::Vec3d& first,
-                              const engine::Vec3d& second,
-                              float ratio) {
-        return {
-            first.x + (second.x - first.x) * static_cast<double>(ratio),
-            first.y + (second.y - first.y) * static_cast<double>(ratio),
-            first.z + (second.z - first.z) * static_cast<double>(ratio)
-        };
-    }
-
-    static float mix(float first, float second, float ratio) {
-        return first + (second - first) * ratio;
+    static bool finiteSample(const render::ContrailRenderSample& sample) {
+        return std::isfinite(sample.localPositionM.x) &&
+               std::isfinite(sample.localPositionM.y) &&
+               std::isfinite(sample.localPositionM.z) &&
+               std::isfinite(sample.radiusM) && sample.radiusM > 0.0f &&
+               std::isfinite(sample.opacityStrength) &&
+               std::isfinite(sample.ageSeconds);
     }
 
     static void objectLoadedCallback(XPLMObjectRef object, void* refcon) {
@@ -291,87 +264,70 @@ private:
             if (object) XPLMUnloadObject(object);
             return;
         }
-        context->owner->objectLoaded(context->bucket, object);
+        context->owner->objectLoaded(context->assetIndex, object);
     }
 
-    void objectLoaded(std::size_t bucket, XPLMObjectRef object) {
+    void objectLoaded(std::size_t assetIndex, XPLMObjectRef object) {
         if (!object) {
-            log("X-Plane could not load opacity bucket " +
-                std::to_string(bucket) + ".\n");
+            log("X-Plane could not load v4 asset " + std::to_string(assetIndex) + ".\n");
             return;
         }
-        if (!running_ || bucket >= pools_.size()) {
+        if (!running_ || assetIndex >= pools_.size()) {
             XPLMUnloadObject(object);
             return;
         }
 
-        auto& pool = pools_[bucket];
+        auto& pool = pools_[assetIndex];
         pool.object = object;
         const char* datarefs[] = {"ffatmo/contrail_debug/scale", nullptr};
-        pool.instances.reserve(kInstancesPerBucket);
-        for (std::size_t index = 0; index < kInstancesPerBucket; ++index) {
+        pool.instances.reserve(kInstancesPerAsset);
+        for (std::size_t index = 0; index < kInstancesPerAsset; ++index) {
             XPLMInstanceRef instance = XPLMCreateInstance(object, datarefs);
             if (!instance) break;
             pool.instances.push_back(instance);
-            hideInstance(instance, index + bucket * kInstancesPerBucket);
+            hideInstance(instance, index + assetIndex * kInstancesPerAsset);
         }
         if (pool.instances.empty()) {
-            log("No instances could be created for opacity bucket " +
-                std::to_string(bucket) + ".\n");
+            log("No instances could be created for v4 asset " +
+                std::to_string(assetIndex) + ".\n");
             return;
         }
         ++loadedObjectCount_;
-        log("Loaded camera-facing opacity bucket " + std::to_string(bucket) +
-            " with " + std::to_string(pool.instances.size()) +
-            " pooled instances.\n");
+        log("Loaded v4 asset " + std::to_string(assetIndex) + " with " +
+            std::to_string(pool.instances.size()) + " pooled instances.\n");
     }
 
     void hideAll() {
-        for (std::size_t bucket = 0; bucket < pools_.size(); ++bucket) {
-            auto& pool = pools_[bucket];
+        for (std::size_t assetIndex = 0; assetIndex < pools_.size(); ++assetIndex) {
+            auto& pool = pools_[assetIndex];
             for (std::size_t index = 0; index < pool.instances.size(); ++index) {
-                hideInstance(pool.instances[index],
-                             index + bucket * kInstancesPerBucket);
+                hideInstance(pool.instances[index], index + assetIndex * kInstancesPerAsset);
             }
         }
         visibleInstanceCount_ = 0;
     }
 
-    static void billboardAngles(const ContrailDebugRenderParcel& parcel,
-                                const XPLMCameraPosition_t& camera,
-                                float& headingDeg,
-                                float& pitchDeg) {
-        const double deltaX = static_cast<double>(camera.x) - parcel.localPositionM.x;
-        const double deltaY = static_cast<double>(camera.y) - parcel.localPositionM.y;
-        const double deltaZ = static_cast<double>(camera.z) - parcel.localPositionM.z;
-        const double horizontal = std::sqrt(deltaX * deltaX + deltaZ * deltaZ);
-
-        // X-Plane object heading zero points along local -Z. Rotate that forward
-        // vector toward the camera, then pitch it to the camera elevation.
-        headingDeg = static_cast<float>(std::atan2(deltaX, -deltaZ) * kRadiansToDegrees);
-        pitchDeg = static_cast<float>(std::atan2(deltaY, std::max(horizontal, 1.0e-6)) *
-                                      kRadiansToDegrees);
-    }
-
     void setInstance(XPLMInstanceRef instance,
-                     const ContrailDebugRenderParcel& parcel,
-                     float scaleM,
+                     const render::ContrailRenderSample& sample,
                      float textureRollDeg,
-                     const XPLMCameraPosition_t& camera) {
+                     const XPLMCameraPosition_t& cameraRaw,
+                     const engine::Vec3d& cameraPosition) {
         if (!instance) return;
-        float headingDeg = 0.0f;
-        float pitchDeg = 0.0f;
-        billboardAngles(parcel, camera, headingDeg, pitchDeg);
+        const auto angles = render::calculateBillboardAngles(sample.localPositionM, cameraPosition);
+        maximumBillboardErrorDeg_ = std::max(
+            maximumBillboardErrorDeg_,
+            render::billboardAlignmentErrorDegrees(
+                sample.localPositionM, cameraPosition, angles));
 
         XPLMDrawInfo_t drawInfo {};
         drawInfo.structSize = sizeof(drawInfo);
-        drawInfo.x = static_cast<float>(parcel.localPositionM.x);
-        drawInfo.y = static_cast<float>(parcel.localPositionM.y);
-        drawInfo.z = static_cast<float>(parcel.localPositionM.z);
-        drawInfo.pitch = pitchDeg;
-        drawInfo.heading = headingDeg;
-        drawInfo.roll = camera.roll + textureRollDeg;
-        float data[] = {scaleM};
+        drawInfo.x = static_cast<float>(sample.localPositionM.x);
+        drawInfo.y = static_cast<float>(sample.localPositionM.y);
+        drawInfo.z = static_cast<float>(sample.localPositionM.z);
+        drawInfo.pitch = angles.pitchDeg;
+        drawInfo.heading = angles.headingDeg;
+        drawInfo.roll = cameraRaw.roll + textureRollDeg;
+        float data[] = {std::clamp(sample.radiusM, 0.25f, 12.0f)};
         XPLMInstanceSetPosition(instance, &drawInfo, data);
     }
 
@@ -386,23 +342,14 @@ private:
         XPLMInstanceSetPosition(instance, &drawInfo, data);
     }
 
-    static std::size_t opacityBucket(const ContrailDebugRenderParcel& parcel) {
-        const float optical = parcel.opticalDepth;
-        const float ageFade = std::clamp(
-            1.0f - parcel.ageSeconds / 90.0f, 0.0f, 1.0f);
-        const float strength = optical * (0.55f + 0.45f * ageFade);
-        if (strength < 0.035f) return 0;
-        if (strength < 0.075f) return 1;
-        if (strength < 0.145f) return 2;
-        return 3;
-    }
-
-    std::array<Pool, kOpacityBucketCount> pools_;
-    std::array<LoadContext, kOpacityBucketCount> loadContexts_;
+    std::array<Pool, kAssetCount> pools_;
+    std::array<LoadContext, kAssetCount> loadContexts_;
     XPLMDataRef scaleDataRef_ = nullptr;
     std::filesystem::path assetDirectory_;
     std::size_t loadedObjectCount_ = 0;
     std::size_t visibleInstanceCount_ = 0;
+    std::uint64_t poolCapacityDropCount_ = 0;
+    double maximumBillboardErrorDeg_ = 0.0;
     bool running_ = false;
     bool enabled_ = true;
 };

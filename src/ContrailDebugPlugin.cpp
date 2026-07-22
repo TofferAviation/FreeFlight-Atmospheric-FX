@@ -1,4 +1,5 @@
 #include "ContrailDebugOverlay.h"
+#include "ContrailWorldRenderer.h"
 #include "acf/AcfGeometry.h"
 #include "diagnostics/LiveSnapshotNormalizer.h"
 #include "engine/LiveContrailEngine.h"
@@ -28,7 +29,9 @@ namespace ffatmo {
 namespace {
 
 constexpr double kPi = 3.14159265358979323846;
-constexpr std::size_t kMaximumRenderedParcels = 1500;
+constexpr std::size_t kMaximumRenderedParcels = 6000;
+constexpr float kPreviewMinimumAglM = 120.0f;
+constexpr float kPreviewMinimumTrueAirspeedMps = 65.0f;
 
 class ContrailDebugRuntime {
 public:
@@ -49,7 +52,7 @@ public:
         reportPath_ = pluginRoot_ / "reports" / "contrail_visual_debug.txt";
         profileService_ = std::make_unique<acf::AcfProfileService>();
         createCommandsAndMenu();
-        log("Started. Default mode is FORCED DRY PREVIEW so the visual can be tested in any weather.\n");
+        log("Started. World-object renderer v2 uses an airborne preview gate.\n");
         return true;
     }
 
@@ -59,11 +62,18 @@ public:
             return false;
         }
         if (!overlay_.start()) {
-            log("Could not register the Vulkan-safe contrail overlay.\n");
+            log("Could not register the Vulkan-safe status overlay.\n");
+            return false;
+        }
+        if (!worldRenderer_.start(pluginRoot_ / "assets")) {
+            log("Could not start the world-space contrail renderer. Check the assets folder.\n");
+            overlay_.stop();
             return false;
         }
 
+        visualEnabled_ = true;
         overlay_.setEnabled(true);
+        worldRenderer_.setEnabled(true);
         resetAllState();
         requestCurrentAircraft();
         XPLMRegisterFlightLoopCallback(flightLoopCallback, -1.0f, this);
@@ -76,6 +86,7 @@ public:
             XPLMUnregisterFlightLoopCallback(flightLoopCallback, this);
             enabled_ = false;
         }
+        worldRenderer_.stop();
         overlay_.stop();
         resetAllState();
     }
@@ -114,6 +125,7 @@ private:
         std::filesystem::path path = pathBuffer[0]
             ? std::filesystem::path(pathBuffer)
             : std::filesystem::path(fileName);
+        if (path.empty() || path.extension() != ".acf") return {};
         if (path.is_relative()) path = xPlaneRoot() / path;
         std::error_code error;
         const auto canonical = std::filesystem::weakly_canonical(path, error);
@@ -130,9 +142,9 @@ private:
     }
 
     static engine::Vec3d bodyOffsetToLocal(const engine::Vec3d& body,
-                                           float headingDeg,
-                                           float pitchDeg,
-                                           float rollDeg) {
+                                            float headingDeg,
+                                            float pitchDeg,
+                                            float rollDeg) {
         const double heading = static_cast<double>(headingDeg) * kPi / 180.0;
         const double pitch = static_cast<double>(pitchDeg) * kPi / 180.0;
         const double roll = static_cast<double>(rollDeg) * kPi / 180.0;
@@ -163,6 +175,8 @@ private:
         latestSnapshot_ = {};
         latestNormalized_ = {};
         latestTimeline_ = {};
+        previewGateOpen_ = false;
+        worldRenderer_.update({});
         overlay_.setFrame({}, {}, {});
     }
 
@@ -174,13 +188,14 @@ private:
         liveEngine_.setEngineExhaustBodyOffsets({});
         normalizer_.reset();
         liveEngine_.reset();
+        worldRenderer_.update({});
         sequenceNumber_ = 0;
 
         if (!profileService_) return;
         const auto path = currentAircraftPath();
         if (path.empty()) {
-            geometryStatus_ = "NO ACF PATH";
-            log("X-Plane did not return an aircraft ACF path.\n");
+            geometryStatus_ = "WAITING FOR ACF";
+            log("Aircraft ACF is not available yet; waiting for XPLM_MSG_PLANE_LOADED.\n");
             return;
         }
         activeAircraftPath_ = path;
@@ -218,17 +233,32 @@ private:
         }
         liveEngine_.setEngineExhaustBodyOffsets(engineExhaustBodyOffsets_);
         liveEngine_.reset();
+        worldRenderer_.update({});
         geometryReady_ = true;
         geometryStatus_ = "ACF EXHAUSTS: " +
             std::to_string(engineExhaustBodyOffsets_.size());
         log("Live exhaust geometry ready for " + result->profile.aircraftName +
             ": " + std::to_string(engineExhaustBodyOffsets_.size()) + " engines.\n");
-        XPLMSpeakString("FF Atmo live contrail geometry ready");
+        XPLMSpeakString("FF Atmo world contrail geometry ready");
     }
 
-    void applyAtmosphereMode(engine::SimulatorSnapshot& snapshot,
+    bool applyAtmosphereMode(engine::SimulatorSnapshot& snapshot,
                              diagnostics::NormalizedReplaySample& normalized) const {
-        if (atmosphereMode_ == AtmosphereMode::Live) return;
+        if (atmosphereMode_ == AtmosphereMode::Live) return true;
+
+        const bool gateOpen = snapshot.heightAglM >= kPreviewMinimumAglM &&
+                              snapshot.trueAirspeedMps >= kPreviewMinimumTrueAirspeedMps;
+        if (!gateOpen) {
+            for (auto& engine : snapshot.engines) {
+                engine.running = 0;
+                engine.n1Percent = 0.0f;
+                engine.n2Percent = 0.0f;
+                engine.fuelFlowKgps = 0.0f;
+                engine.thrustN = 0.0f;
+                engine.exhaustVelocityMps = 0.0f;
+            }
+            return false;
+        }
 
         const bool persistent = atmosphereMode_ == AtmosphereMode::PersistentPreview;
         normalized.altitudeMslM = std::max(normalized.altitudeMslM, 9000.0);
@@ -239,10 +269,11 @@ private:
         snapshot.atmosphere.staticPressurePa = 30000.0f;
         snapshot.atmosphere.densityKgM3 = 0.45f;
 
-        const std::uint32_t desiredEngines = static_cast<std::uint32_t>(std::clamp<std::size_t>(
-            engineExhaustBodyOffsets_.empty() ? 2 : engineExhaustBodyOffsets_.size(),
-            1,
-            engine::kMaximumRecordedEngines));
+        const std::uint32_t desiredEngines = static_cast<std::uint32_t>(
+            std::clamp<std::size_t>(
+                engineExhaustBodyOffsets_.empty() ? 2 : engineExhaustBodyOffsets_.size(),
+                1,
+                engine::kMaximumRecordedEngines));
         snapshot.engineCount = std::max(snapshot.engineCount, desiredEngines);
         snapshot.engineCount = std::min<std::uint32_t>(
             snapshot.engineCount, static_cast<std::uint32_t>(snapshot.engines.size()));
@@ -255,6 +286,7 @@ private:
             engine.thrustN = std::max(engine.thrustN, 22000.0f);
             engine.exhaustVelocityMps = std::max(engine.exhaustVelocityMps, 390.0f);
         }
+        return true;
     }
 
     std::vector<ContrailDebugRenderParcel> buildRenderParcels(
@@ -272,6 +304,7 @@ private:
             const double deltaUp = parcel.worldPositionM.y - normalized.worldUpM;
             const double deltaNorth = parcel.worldPositionM.z - normalized.worldNorthM;
             ContrailDebugRenderParcel item;
+            item.parcelId = parcel.id;
             item.localPositionM = {
                 snapshot.localPositionM.x + deltaEast,
                 snapshot.localPositionM.y + deltaUp,
@@ -316,16 +349,20 @@ private:
         status.aircraftIcao = snapshotSource_.aircraftIcao();
         status.mode = modeName(atmosphereMode_);
         status.geometryStatus = geometryStatus_;
+        status.rendererStatus = worldRenderer_.ready() ? "WORLD OBJECTS READY" : "LOADING OBJECTS";
         status.activeParcels = liveEngine_.parcels().size();
         status.emittedParcels = liveEngine_.summary().emittedParcelCount;
         status.expiredParcels = liveEngine_.summary().expiredParcelCount;
         status.peakParcels = liveEngine_.summary().peakActiveParcelCount;
         status.originRebases = normalizer_.localOriginRebaseCount();
+        status.visibleInstances = worldRenderer_.visibleInstanceCount();
         status.formationPotential = latestTimeline_.formationPotential;
         status.relativeHumidityIcePercent = latestNormalized_.relativeHumidityIcePercent;
         status.temperatureK = latestNormalized_.temperatureK;
         status.physicsFrozen = latestTimeline_.physicsFrozen;
         status.simulationEnabled = simulationEnabled_;
+        status.rendererReady = worldRenderer_.ready();
+        status.previewGateOpen = previewGateOpen_;
         return status;
     }
 
@@ -339,17 +376,26 @@ private:
         }
 
         const auto& summary = liveEngine_.summary();
-        stream << "FFAtmo Live Contrail Visual Debug Report\n"
+        stream << "FFAtmo World Contrail Visual Debug Report v2\n"
                << "status=" << (summary.ok ? "OK" : "ERROR") << '\n'
                << "error=" << summary.error << '\n'
                << "aircraft_name=" << snapshotSource_.aircraftName() << '\n'
                << "aircraft_icao=" << snapshotSource_.aircraftIcao() << '\n'
                << "aircraft_path=" << activeAircraftPath_.string() << '\n'
                << "atmosphere_mode=" << modeName(atmosphereMode_) << '\n'
+               << "preview_gate_open=" << (previewGateOpen_ ? 1 : 0) << '\n'
+               << "preview_minimum_agl_m=" << kPreviewMinimumAglM << '\n'
+               << "preview_minimum_tas_mps=" << kPreviewMinimumTrueAirspeedMps << '\n'
                << "geometry_status=" << geometryStatus_ << '\n'
                << "geometry_engine_count=" << engineExhaustBodyOffsets_.size() << '\n'
+               << "world_renderer_ready=" << (worldRenderer_.ready() ? 1 : 0) << '\n'
+               << "world_renderer_loaded_objects=" << worldRenderer_.loadedObjectCount() << '\n'
+               << "world_renderer_visible_instances=" << worldRenderer_.visibleInstanceCount() << '\n'
+               << "world_renderer_capacity="
+               << ContrailWorldRenderer::kOpacityBucketCount *
+                  ContrailWorldRenderer::kInstancesPerBucket << '\n'
                << "simulation_enabled=" << (simulationEnabled_ ? 1 : 0) << '\n'
-               << "overlay_enabled=" << (overlay_.enabled() ? 1 : 0) << '\n'
+               << "visuals_enabled=" << (visualEnabled_ ? 1 : 0) << '\n'
                << "input_sample_count=" << summary.inputSampleCount << '\n'
                << "active_parcel_count=" << liveEngine_.parcels().size() << '\n'
                << "emitted_parcel_count=" << summary.emittedParcelCount << '\n'
@@ -371,8 +417,8 @@ private:
                << "deterministic_hash=0x" << std::setw(16)
                << summary.deterministicHash << '\n';
 
-        log("Live visual-debug report written to: " + reportPath_.string() + "\n");
-        XPLMSpeakString("FF Atmo live contrail report exported");
+        log("World visual-debug report written to: " + reportPath_.string() + "\n");
+        XPLMSpeakString("FF Atmo world contrail report exported");
     }
 
     void cycleAtmosphereMode() {
@@ -388,6 +434,7 @@ private:
                 break;
         }
         liveEngine_.reset();
+        worldRenderer_.update({});
         log(std::string("Atmosphere mode: ") + modeName(atmosphereMode_) + "\n");
         XPLMSpeakString(modeName(atmosphereMode_));
     }
@@ -406,7 +453,7 @@ private:
 
         engine::SimulatorSnapshot simulationSnapshot = latestSnapshot_;
         diagnostics::NormalizedReplaySample simulationNormalized = latestNormalized_;
-        applyAtmosphereMode(simulationSnapshot, simulationNormalized);
+        previewGateOpen_ = applyAtmosphereMode(simulationSnapshot, simulationNormalized);
         latestNormalized_.temperatureK = simulationNormalized.temperatureK;
         latestNormalized_.dewPointK = simulationNormalized.dewPointK;
         latestNormalized_.relativeHumidityIcePercent =
@@ -414,8 +461,7 @@ private:
         latestNormalized_.altitudeMslM = simulationNormalized.altitudeMslM;
 
         if (simulationEnabled_) {
-            latestTimeline_ = liveEngine_.step(
-                simulationSnapshot, simulationNormalized);
+            latestTimeline_ = liveEngine_.step(simulationSnapshot, simulationNormalized);
         } else {
             latestTimeline_.sequenceNumber = simulationNormalized.sequenceNumber;
             latestTimeline_.simulationTimeSeconds = simulationNormalized.simulationTimeSeconds;
@@ -427,10 +473,9 @@ private:
             latestTimeline_.activeParcelCount = liveEngine_.parcels().size();
         }
 
-        overlay_.setFrame(
-            buildRenderParcels(latestSnapshot_, simulationNormalized),
-            buildRenderSources(latestSnapshot_),
-            buildOverlayStatus());
+        auto renderParcels = buildRenderParcels(latestSnapshot_, simulationNormalized);
+        worldRenderer_.update(renderParcels);
+        overlay_.setFrame({}, buildRenderSources(latestSnapshot_), buildOverlayStatus());
         return -1.0f;
     }
 
@@ -447,9 +492,11 @@ private:
         if (phase != xplm_CommandBegin) return 1;
         auto* self = static_cast<ContrailDebugRuntime*>(refcon);
         if (command == self->toggleOverlayCommand_) {
-            self->overlay_.toggle();
-            log(std::string("Visual overlay ") +
-                (self->overlay_.enabled() ? "enabled.\n" : "disabled.\n"));
+            self->visualEnabled_ = !self->visualEnabled_;
+            self->overlay_.setEnabled(self->visualEnabled_);
+            self->worldRenderer_.setEnabled(self->visualEnabled_);
+            log(std::string("World contrail visuals ") +
+                (self->visualEnabled_ ? "enabled.\n" : "disabled.\n"));
         } else if (command == self->toggleSimulationCommand_) {
             self->simulationEnabled_ = !self->simulationEnabled_;
             log(std::string("Live contrail simulation ") +
@@ -458,6 +505,7 @@ private:
             self->cycleAtmosphereMode();
         } else if (command == self->resetTrailCommand_) {
             self->liveEngine_.reset();
+            self->worldRenderer_.update({});
             log("Live contrail trail reset.\n");
         } else if (command == self->reloadGeometryCommand_) {
             self->requestCurrentAircraft();
@@ -470,7 +518,7 @@ private:
     void createCommandsAndMenu() {
         toggleOverlayCommand_ = XPLMCreateCommand(
             "ffatmo_contrail_debug/toggle_overlay",
-            "Toggle the FFAtmo live contrail visual overlay");
+            "Toggle FFAtmo world contrail visuals and status overlay");
         toggleSimulationCommand_ = XPLMCreateCommand(
             "ffatmo_contrail_debug/toggle_simulation",
             "Enable or disable live contrail physics");
@@ -506,7 +554,7 @@ private:
             nullptr,
             nullptr);
         XPLMAppendMenuItemWithCommand(
-            menu_, "Visual Overlay: ON / OFF", toggleOverlayCommand_);
+            menu_, "World Visuals + Status: ON / OFF", toggleOverlayCommand_);
         XPLMAppendMenuItemWithCommand(
             menu_, "Simulation: ON / OFF", toggleSimulationCommand_);
         XPLMAppendMenuItemWithCommand(
@@ -544,6 +592,7 @@ private:
     host::XPlaneSnapshotSource snapshotSource_;
     diagnostics::LiveSnapshotNormalizer normalizer_;
     engine::LiveContrailEngine liveEngine_;
+    ContrailWorldRenderer worldRenderer_;
     ContrailDebugOverlay overlay_;
 
     engine::SimulatorSnapshot latestSnapshot_ {};
@@ -561,9 +610,11 @@ private:
     XPLMCommandRef exportReportCommand_ = nullptr;
 
     bool enabled_ = false;
+    bool visualEnabled_ = true;
     bool simulationEnabled_ = true;
     bool aircraftDirty_ = false;
     bool geometryReady_ = false;
+    bool previewGateOpen_ = false;
     std::uint64_t sequenceNumber_ = 0;
     std::uint64_t expectedGeneration_ = 0;
     std::uint64_t deliveredGeneration_ = 0;
@@ -583,7 +634,7 @@ PLUGIN_API int XPluginStart(char* outName,
         outDescription,
         256,
         "%s",
-        "Live deterministic contrail parcel simulation with Vulkan-safe visual debug rendering");
+        "Live contrail physics with pooled depth-aware X-Plane world-object rendering");
     return ffatmo::gRuntime.start() ? 1 : 0;
 }
 

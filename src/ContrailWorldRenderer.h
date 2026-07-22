@@ -2,6 +2,7 @@
 
 #include "ContrailDebugOverlay.h"
 
+#include "XPLMCamera.h"
 #include "XPLMDataAccess.h"
 #include "XPLMInstance.h"
 #include "XPLMScenery.h"
@@ -21,7 +22,7 @@ namespace ffatmo {
 class ContrailWorldRenderer {
 public:
     static constexpr std::size_t kOpacityBucketCount = 4;
-    static constexpr std::size_t kInstancesPerBucket = 144;
+    static constexpr std::size_t kInstancesPerBucket = 256;
 
     ContrailWorldRenderer() {
         for (std::size_t index = 0; index < loadContexts_.size(); ++index) {
@@ -41,6 +42,8 @@ public:
         visibleInstanceCount_ = 0;
         enabled_ = true;
 
+        // XPLMInstance resolves custom animation datarefs while loading the OBJ,
+        // so this accessor must exist before XPLMLoadObjectAsync is called.
         scaleDataRef_ = XPLMRegisterDataAccessor(
             "ffatmo/contrail_debug/scale",
             xplmType_Float,
@@ -106,6 +109,9 @@ public:
             return;
         }
 
+        XPLMCameraPosition_t camera {};
+        XPLMReadCameraPosition(&camera);
+
         std::vector<const ContrailDebugRenderParcel*> visible;
         visible.reserve(parcels.size());
         for (const auto& parcel : parcels) {
@@ -148,13 +154,18 @@ public:
             for (; index < assigned.size(); ++index) {
                 const auto& parcel = *assigned[index];
                 const float ageExpansion = 1.0f +
-                    0.18f * std::clamp(parcel.ageSeconds / 55.0f, 0.0f, 1.0f);
-                const float scaleM = std::clamp(parcel.radiusM * ageExpansion,
-                                                0.70f,
-                                                28.0f);
-                const float roll = static_cast<float>(
+                    0.12f * std::clamp(parcel.ageSeconds / 55.0f, 0.0f, 1.0f);
+
+                // The OBJ quad is wider than it is tall. Half-radius scaling keeps
+                // young engine-core condensation tight and prevents old parcels from
+                // becoming the giant opaque balls seen in renderer v2.
+                const float scaleM = std::clamp(
+                    parcel.radiusM * 0.42f * ageExpansion,
+                    0.34f,
+                    8.5f);
+                const float textureRollDeg = static_cast<float>(
                     (parcel.parcelId * 47u + parcel.engineIndex * 83u) % 360u);
-                setInstance(pool.instances[index], parcel, scaleM, roll);
+                setInstance(pool.instances[index], parcel, scaleM, textureRollDeg, camera);
                 ++visibleInstanceCount_;
             }
             for (; index < pool.instances.size(); ++index) {
@@ -192,6 +203,8 @@ private:
         ContrailWorldRenderer* owner = nullptr;
         std::size_t bucket = 0;
     };
+
+    static constexpr double kRadiansToDegrees = 57.2957795130823208768;
 
     static void log(const std::string& message) {
         XPLMDebugString(("[FFAtmo Contrail World Renderer] " + message).c_str());
@@ -237,7 +250,7 @@ private:
             return;
         }
         ++loadedObjectCount_;
-        log("Loaded opacity bucket " + std::to_string(bucket) +
+        log("Loaded camera-facing opacity bucket " + std::to_string(bucket) +
             " with " + std::to_string(pool.instances.size()) +
             " pooled instances.\n");
     }
@@ -253,19 +266,40 @@ private:
         visibleInstanceCount_ = 0;
     }
 
+    static void billboardAngles(const ContrailDebugRenderParcel& parcel,
+                                const XPLMCameraPosition_t& camera,
+                                float& headingDeg,
+                                float& pitchDeg) {
+        const double deltaX = static_cast<double>(camera.x) - parcel.localPositionM.x;
+        const double deltaY = static_cast<double>(camera.y) - parcel.localPositionM.y;
+        const double deltaZ = static_cast<double>(camera.z) - parcel.localPositionM.z;
+        const double horizontal = std::sqrt(deltaX * deltaX + deltaZ * deltaZ);
+
+        // X-Plane object heading zero points along local -Z. Rotate that forward
+        // vector toward the camera, then pitch it to the camera elevation.
+        headingDeg = static_cast<float>(std::atan2(deltaX, -deltaZ) * kRadiansToDegrees);
+        pitchDeg = static_cast<float>(std::atan2(deltaY, std::max(horizontal, 1.0e-6)) *
+                                      kRadiansToDegrees);
+    }
+
     void setInstance(XPLMInstanceRef instance,
                      const ContrailDebugRenderParcel& parcel,
                      float scaleM,
-                     float rollDeg) {
+                     float textureRollDeg,
+                     const XPLMCameraPosition_t& camera) {
         if (!instance) return;
+        float headingDeg = 0.0f;
+        float pitchDeg = 0.0f;
+        billboardAngles(parcel, camera, headingDeg, pitchDeg);
+
         XPLMDrawInfo_t drawInfo {};
         drawInfo.structSize = sizeof(drawInfo);
         drawInfo.x = static_cast<float>(parcel.localPositionM.x);
         drawInfo.y = static_cast<float>(parcel.localPositionM.y);
         drawInfo.z = static_cast<float>(parcel.localPositionM.z);
-        drawInfo.pitch = 0.0f;
-        drawInfo.heading = 0.0f;
-        drawInfo.roll = rollDeg;
+        drawInfo.pitch = pitchDeg;
+        drawInfo.heading = headingDeg;
+        drawInfo.roll = camera.roll + textureRollDeg;
         float data[] = {scaleM};
         XPLMInstanceSetPosition(instance, &drawInfo, data);
     }

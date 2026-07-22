@@ -32,6 +32,7 @@ add_library(ffatmo_core STATIC
     src/diagnostics/ReplayRunner.cpp
     src/engine/ContrailSimulation.cpp
     src/engine/LiveContrailEngine.cpp
+    src/render/ContrailRenderPlanner.cpp
 )
 target_include_directories(ffatmo_core PUBLIC src)
 target_link_libraries(ffatmo_core PUBLIC Threads::Threads)
@@ -131,6 +132,10 @@ if(FFATMO_BUILD_TESTS)
     add_executable(ffatmo_live_contrail_debug_tests tests/LiveContrailDebugTests.cpp)
     target_link_libraries(ffatmo_live_contrail_debug_tests PRIVATE ffatmo_core)
     add_test(NAME ffatmo_live_contrail_debug_tests COMMAND ffatmo_live_contrail_debug_tests)
+
+    add_executable(ffatmo_contrail_render_planner_tests tests/ContrailRenderPlannerTests.cpp)
+    target_link_libraries(ffatmo_contrail_render_planner_tests PRIVATE ffatmo_core)
+    add_test(NAME ffatmo_contrail_render_planner_tests COMMAND ffatmo_contrail_render_planner_tests)
 endif()
 
 if(FFATMO_BUILD_IMGUI_PANEL)

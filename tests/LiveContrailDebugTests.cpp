@@ -140,8 +140,16 @@ int main() {
     const Fixture fixture = makeDryFixture(1800);
     const auto offline = engine::simulateContrails(fixture.replay, fixture.normalized);
     engine::LiveContrailEngine live;
+    engine::LiveContrailEngine liveRepeat;
+    const std::vector<engine::Vec3d> exhaustOffsets = {
+        {-4.95, -1.50, -0.75},
+        {4.95, -1.50, -0.75}
+    };
+    live.setEngineExhaustBodyOffsets(exhaustOffsets);
+    liveRepeat.setEngineExhaustBodyOffsets(exhaustOffsets);
     for (std::size_t index = 0; index < fixture.replay.snapshots.size(); ++index) {
         live.step(fixture.replay.snapshots[index], fixture.normalized.samples[index]);
+        liveRepeat.step(fixture.replay.snapshots[index], fixture.normalized.samples[index]);
     }
 
     require(live.summary().ok, "live contrail engine remains valid");
@@ -150,23 +158,31 @@ int main() {
     require(live.summary().expiredParcelCount == offline.summary.expiredParcelCount,
             "live and offline engines expire the same parcel count");
     require(live.summary().peakActiveParcelCount == offline.summary.peakActiveParcelCount,
-            "live and offline engines have the same peak population");
-    require(live.summary().deterministicHash == offline.summary.deterministicHash,
-            "live and offline engines produce the same deterministic timeline hash");
-    require(live.parcels().size() == offline.finalParcels.size(),
-            "live and offline final parcel populations match");
+            "wake displacement does not change parcel population");
+    require(live.summary().deterministicHash == liveRepeat.summary().deterministicHash,
+            "repeated live wake simulation produces the same deterministic hash");
+    require(live.parcels().size() == liveRepeat.parcels().size(),
+            "repeated live simulations finish with the same parcel count");
 
     engine::LiveContrailEngine geometryEngine;
-    geometryEngine.setEngineExhaustBodyOffsets({
-        {-4.95, -1.50, -0.75},
-        {4.95, -1.50, -0.75}
-    });
-    for (std::size_t index = 0; index < 20; ++index) {
+    geometryEngine.setEngineExhaustBodyOffsets(exhaustOffsets);
+    for (std::size_t index = 0; index < 240; ++index) {
         geometryEngine.step(fixture.replay.snapshots[index], fixture.normalized.samples[index]);
     }
     require(geometryEngine.summary().ok,
             "parsed exhaust offsets are accepted by the live engine");
+    bool observedRollup = false;
+    for (const auto& parcel : geometryEngine.parcels()) {
+        if (std::abs(parcel.vortexSide) > 0.5f &&
+            (std::abs(parcel.appliedVortexLateralM) > 0.05f ||
+             std::abs(parcel.appliedVortexVerticalM) > 0.05f)) {
+            observedRollup = true;
+            break;
+        }
+    }
+    require(observedRollup,
+            "live parcels receive deterministic inward wake-roll-up displacement");
 
-    std::cout << "FFAtmo live contrail debug tests passed\n";
+    std::cout << "FFAtmo live contrail world-renderer tests passed\n";
     return 0;
 }

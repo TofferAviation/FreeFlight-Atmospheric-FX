@@ -1,0 +1,1 @@
+The live contrail debug plugin loaded successfully under Vulkan on X-Plane 12.4.3-r2. Its own log entries show normal startup, current-aircraft parsing, geometry readiness, and report export. Unrelated AutoGate, AirportVS-SASL, openSAM, and other third-party plugin errors were present in the simulator log.

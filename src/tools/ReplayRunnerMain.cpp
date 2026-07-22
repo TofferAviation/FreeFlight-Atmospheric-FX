@@ -7,8 +7,10 @@
 
 namespace {
 
+constexpr const char* kReplayRunnerBuild = "engine-v1-replay-runner-v1";
+
 void printUsage() {
-    std::cout << "FFAtmo Offline Replay Runner\n\n"
+    std::cout << "FFAtmo Offline Replay Runner (" << kReplayRunnerBuild << ")\n\n"
               << "Usage:\n"
               << "  FFAtmoReplayRunner <recording.ffar> [--output <directory>] [--no-csv]\n\n"
               << "The runner validates the replay, normalizes aircraft/environment state,\n"
@@ -92,6 +94,7 @@ int main(int argc, char** argv) {
 
     const auto& summary = result.summary;
     std::cout << "FFAtmo replay analysis " << (summary.ok ? "completed" : "failed") << '\n'
+              << "Build: " << kReplayRunnerBuild << '\n'
               << "Aircraft: " << replay.metadata.aircraftName
               << " (" << replay.metadata.aircraftIcao << ")\n"
               << "Snapshots: " << summary.inputSnapshotCount << '\n'

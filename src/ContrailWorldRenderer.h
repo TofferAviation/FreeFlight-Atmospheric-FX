@@ -15,6 +15,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <limits>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -49,6 +50,8 @@ public:
         poolCapacityDropCount_ = 0;
         maximumBillboardErrorDeg_ = 0.0;
         maximumTrailAlignmentErrorDeg_ = 0.0;
+        minimumTrailProjectionFactor_ = 1.0;
+        maximumLengthCompressionRatio_ = 0.0;
         selectedPerAsset_.fill(0);
         renderedPerAsset_.fill(0);
         enabled_ = true;
@@ -58,7 +61,7 @@ public:
         lengthDataRef_ = registerScaleDataRef(
             "ffatmo/contrail_debug/length", readLength);
         if (!widthDataRef_ || !lengthDataRef_) {
-            log("Could not register the v4.1 width/length instance datarefs.\n");
+            log("Could not register the v4.2 width/length instance datarefs.\n");
             stop();
             return false;
         }
@@ -72,7 +75,7 @@ public:
                     ("contrail_core_" + std::to_string(bucket) + "_" +
                      std::string(1, variantName) + ".obj");
                 if (!std::filesystem::exists(objectPath)) {
-                    log("Missing v4.1 asset: " + objectPath.string() + "\n");
+                    log("Missing v4.2 asset: " + objectPath.string() + "\n");
                     stop();
                     return false;
                 }
@@ -131,7 +134,7 @@ public:
         std::array<std::vector<VisibleSample>, kAssetCount> assigned;
         constexpr double maximumDistanceSquared = 120000.0 * 120000.0;
         for (const auto& sample : samples) {
-            if (!finiteSample(sample) || sample.opacityStrength < 0.002f ||
+            if (!finiteSample(sample) || sample.opacityStrength < 0.0008f ||
                 sample.opacityBucket >= kOpacityBucketCount ||
                 sample.textureVariant >= kTextureVariantCount) {
                 continue;
@@ -231,6 +234,8 @@ public:
     std::uint64_t poolCapacityDropCount() const { return poolCapacityDropCount_; }
     double maximumBillboardErrorDeg() const { return maximumBillboardErrorDeg_; }
     double maximumTrailAlignmentErrorDeg() const { return maximumTrailAlignmentErrorDeg_; }
+    double minimumTrailProjectionFactor() const { return minimumTrailProjectionFactor_; }
+    double maximumLengthCompressionRatio() const { return maximumLengthCompressionRatio_; }
     const std::array<std::size_t, kAssetCount>& selectedPerAsset() const {
         return selectedPerAsset_;
     }
@@ -310,7 +315,7 @@ private:
 
     void objectLoaded(std::size_t assetIndex, XPLMObjectRef object) {
         if (!object) {
-            log("X-Plane could not load v4.1 asset " + std::to_string(assetIndex) + ".\n");
+            log("X-Plane could not load v4.2 asset " + std::to_string(assetIndex) + ".\n");
             return;
         }
         if (!running_ || assetIndex >= pools_.size()) {
@@ -335,12 +340,12 @@ private:
             hideInstance(instance, index + assetIndex * kInstancesPerAsset);
         }
         if (pool.slots.empty()) {
-            log("No instances could be created for v4.1 asset " +
+            log("No instances could be created for v4.2 asset " +
                 std::to_string(assetIndex) + ".\n");
             return;
         }
         ++loadedObjectCount_;
-        log("Loaded v4.1 asset " + std::to_string(assetIndex) + " with " +
+        log("Loaded v4.2 asset " + std::to_string(assetIndex) + " with " +
             std::to_string(pool.slots.size()) + " persistent slots.\n");
     }
 
@@ -378,6 +383,21 @@ private:
                 sample.trailTangentLocal,
                 angles));
 
+        const double projection = render::trailProjectionFactor(
+            sample.localPositionM, cameraPosition, sample.trailTangentLocal);
+        minimumTrailProjectionFactor_ = std::min(minimumTrailProjectionFactor_, projection);
+        const float projectedLength = static_cast<float>(
+            sample.lengthM * std::clamp(projection, 0.08, 1.0));
+        const float effectiveLength = std::clamp(
+            std::max(projectedLength, sample.widthM * 1.05f),
+            0.60f,
+            30.0f);
+        if (sample.lengthM > 1.0e-5f) {
+            maximumLengthCompressionRatio_ = std::max(
+                maximumLengthCompressionRatio_,
+                1.0 - static_cast<double>(effectiveLength / sample.lengthM));
+        }
+
         XPLMDrawInfo_t drawInfo {};
         drawInfo.structSize = sizeof(drawInfo);
         drawInfo.x = static_cast<float>(sample.localPositionM.x);
@@ -387,8 +407,8 @@ private:
         drawInfo.heading = angles.headingDeg;
         drawInfo.roll = angles.rollDeg;
         float data[] = {
-            std::clamp(sample.widthM, 0.50f, 24.0f),
-            std::clamp(sample.lengthM, 1.0f, 32.0f)
+            std::clamp(sample.widthM, 0.30f, 24.0f),
+            effectiveLength
         };
         XPLMInstanceSetPosition(instance, &drawInfo, data);
     }
@@ -416,6 +436,8 @@ private:
     std::uint64_t poolCapacityDropCount_ = 0;
     double maximumBillboardErrorDeg_ = 0.0;
     double maximumTrailAlignmentErrorDeg_ = 0.0;
+    double minimumTrailProjectionFactor_ = 1.0;
+    double maximumLengthCompressionRatio_ = 0.0;
     bool running_ = false;
     bool enabled_ = true;
 };

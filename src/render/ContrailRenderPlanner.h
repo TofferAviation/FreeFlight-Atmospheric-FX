@@ -27,6 +27,7 @@ struct ContrailRenderInput {
     float opticalDepth = 0.0f;
     float normalizedIceMass = 0.0f;
     float ageSeconds = 0.0f;
+    bool syntheticHead = false;
 };
 
 struct ContrailRenderSample {
@@ -43,6 +44,7 @@ struct ContrailRenderSample {
     std::uint8_t opacityBucket = 0;
     std::uint8_t textureVariant = 0;
     ContrailRenderLayer layer = ContrailRenderLayer::Core;
+    bool nearField = false;
 };
 
 struct ContrailRenderPlannerSettings {
@@ -51,7 +53,11 @@ struct ContrailRenderPlannerSettings {
     double maximumSegmentGapM = 250.0;
     float maximumAgeGapSeconds = 1.0f;
     float minimumOpticalDepth = 0.004f;
-    float minimumOpacityStrength = 0.002f;
+    float minimumOpacityStrength = 0.0008f;
+    float heatHandoffStartSeconds = 0.02f;
+    float heatHandoffFullSeconds = 0.80f;
+    float maximumCoreAgeSeconds = 22.0f;
+    double maximumSelectedSpacingM = 45.0;
     std::array<std::size_t, kContrailRenderAssetCount> assetCapacities {
         192, 192, 192, 192, 192, 192, 192, 192
     };
@@ -66,9 +72,13 @@ struct ContrailRenderPlannerStatistics {
     std::size_t generatedHaloCount = 0;
     std::size_t selectedCoreCount = 0;
     std::size_t selectedHaloCount = 0;
+    std::size_t generatedNearFieldCount = 0;
+    std::size_t selectedNearFieldCount = 0;
     std::size_t streamBreakCount = 0;
     std::size_t capacityRejectedCount = 0;
     std::size_t assetCapacityRejectedCount = 0;
+    std::size_t assetBucketRemapCount = 0;
+    std::size_t continuityTrimmedCount = 0;
     std::array<std::size_t, kContrailOpacityBucketCount> generatedByBucket {};
     std::array<std::size_t, kContrailRenderAssetCount> selectedByAsset {};
     double maximumSelectedSpacingM = 0.0;

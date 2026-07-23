@@ -21,6 +21,10 @@ inline engine::Vec3d normalizedVector(const engine::Vec3d& value,
     return {value.x / magnitude, value.y / magnitude, value.z / magnitude};
 }
 
+inline double vectorLength(const engine::Vec3d& value) {
+    return std::sqrt(value.x * value.x + value.y * value.y + value.z * value.z);
+}
+
 inline double dotVector(const engine::Vec3d& a, const engine::Vec3d& b) {
     return a.x * b.x + a.y * b.y + a.z * b.z;
 }
@@ -48,6 +52,19 @@ inline BillboardAngles calculateBillboardAngles(const engine::Vec3d& objectPosit
     return result;
 }
 
+inline double trailProjectionFactor(const engine::Vec3d& objectPosition,
+                                    const engine::Vec3d& cameraPosition,
+                                    const engine::Vec3d& trailTangentLocal) {
+    const engine::Vec3d viewDirection = normalizedVector({
+        cameraPosition.x - objectPosition.x,
+        cameraPosition.y - objectPosition.y,
+        cameraPosition.z - objectPosition.z
+    }, {0.0, 0.0, -1.0});
+    const engine::Vec3d tangent = normalizedVector(trailTangentLocal, {0.0, 0.0, -1.0});
+    const double parallel = std::clamp(std::abs(dotVector(viewDirection, tangent)), 0.0, 1.0);
+    return std::sqrt(std::max(0.0, 1.0 - parallel * parallel));
+}
+
 inline BillboardAngles calculateTrailBillboardAngles(
     const engine::Vec3d& objectPosition,
     const engine::Vec3d& cameraPosition,
@@ -72,12 +89,23 @@ inline BillboardAngles calculateTrailBillboardAngles(
     const engine::Vec3d referenceRight = normalizedVector(
         crossVector(normal, referenceUp), {1.0, 0.0, 0.0});
 
-    const double tangentNormalComponent = dotVector(trailTangentLocal, normal);
+    const engine::Vec3d tangent = normalizedVector(trailTangentLocal, referenceUp);
+    const double tangentNormalComponent = dotVector(tangent, normal);
     const engine::Vec3d projectedTangent {
-        trailTangentLocal.x - normal.x * tangentNormalComponent,
-        trailTangentLocal.y - normal.y * tangentNormalComponent,
-        trailTangentLocal.z - normal.z * tangentNormalComponent
+        tangent.x - normal.x * tangentNormalComponent,
+        tangent.y - normal.y * tangentNormalComponent,
+        tangent.z - normal.z * tangentNormalComponent
     };
+    const double projectedLength = vectorLength(projectedTangent);
+
+    // When looking almost directly along a trail segment, its projected direction
+    // is undefined. Holding roll at zero is stable and the renderer shortens the
+    // segment using trailProjectionFactor(), avoiding the v4.1 vertical spike.
+    if (!std::isfinite(projectedLength) || projectedLength < 0.06) {
+        result.rollDeg = 0.0f;
+        return result;
+    }
+
     const engine::Vec3d alignedTangent = normalizedVector(projectedTangent, referenceUp);
     const double rightComponent = dotVector(alignedTangent, referenceRight);
     const double upComponent = dotVector(alignedTangent, referenceUp);
@@ -114,6 +142,10 @@ inline double trailAlignmentErrorDegrees(const engine::Vec3d& objectPosition,
                                          const BillboardAngles& angles) {
     constexpr double degreesToRadians = 0.017453292519943295769;
     constexpr double radiansToDegrees = 57.2957795130823208768;
+
+    if (trailProjectionFactor(objectPosition, cameraPosition, trailTangentLocal) < 0.06) {
+        return 0.0;
+    }
 
     const double heading = static_cast<double>(angles.headingDeg) * degreesToRadians;
     const double pitch = static_cast<double>(angles.pitchDeg) * degreesToRadians;

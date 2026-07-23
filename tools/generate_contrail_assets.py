@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate deterministic Renderer v4.1 OBJ8 trail-segment assets."""
+"""Generate deterministic Renderer Foundation v4.2 OBJ8 trail assets."""
 
 from __future__ import annotations
 
@@ -14,8 +14,9 @@ from pathlib import Path
 WIDTH = 256
 HEIGHT = 256
 BORDER_FRACTION = 0.08
-ALPHA_LEVELS = (0.030, 0.052, 0.082, 0.120)
+ALPHA_LEVELS = (0.018, 0.032, 0.055, 0.085)
 VARIANTS = ("a", "b")
+LUMINANCE_NITS = 250
 
 
 def png_chunk(kind: bytes, payload: bytes) -> bytes:
@@ -58,21 +59,21 @@ def make_texture(maximum_alpha: float, seed: int) -> bytes:
     edge_phase = rng.uniform(0.0, math.tau)
     broad_lobes = [
         (
-            rng.uniform(-0.20, 0.20),
-            rng.uniform(-0.82, 0.82),
-            rng.uniform(0.16, 0.34),
-            rng.uniform(0.45, 1.00),
+            rng.uniform(-0.16, 0.16),
+            rng.uniform(-0.84, 0.84),
+            rng.uniform(0.14, 0.31),
+            rng.uniform(0.42, 1.00),
         )
-        for _ in range(18)
+        for _ in range(20)
     ]
     detail_lobes = [
         (
-            rng.uniform(-0.48, 0.48),
-            rng.uniform(-0.90, 0.90),
-            rng.uniform(0.045, 0.13),
-            rng.uniform(0.08, 0.30),
+            rng.uniform(-0.42, 0.42),
+            rng.uniform(-0.92, 0.92),
+            rng.uniform(0.040, 0.115),
+            rng.uniform(0.06, 0.26),
         )
-        for _ in range(56)
+        for _ in range(60)
     ]
 
     pixels = bytearray()
@@ -83,36 +84,36 @@ def make_texture(maximum_alpha: float, seed: int) -> bytes:
             px = (2.0 * (x + 0.5) / WIDTH) - 1.0
 
             centre_offset = (
-                0.055 * math.sin(py * 4.8 + centreline_phase)
-                + 0.022 * math.sin(py * 11.0 + edge_phase)
+                0.045 * math.sin(py * 4.6 + centreline_phase)
+                + 0.018 * math.sin(py * 10.7 + edge_phase)
             )
             lateral = abs(px - centre_offset)
             edge_width = (
-                0.72
-                + 0.055 * math.sin(py * 5.3 + edge_phase)
-                + 0.025 * math.sin(py * 12.7 + centreline_phase)
+                0.64
+                + 0.050 * math.sin(py * 5.1 + edge_phase)
+                + 0.020 * math.sin(py * 12.3 + centreline_phase)
             )
-            lateral_envelope = 1.0 - smoothstep(0.18, max(edge_width, 0.52), lateral)
-            end_envelope = 1.0 - smoothstep(0.72, 0.96, abs(py))
+            lateral_envelope = 1.0 - smoothstep(0.12, max(edge_width, 0.48), lateral)
+            end_envelope = 1.0 - smoothstep(0.64, 0.96, abs(py))
 
             broad = 0.0
             for lx, ly, sigma, weight in broad_lobes:
                 broad += weight * gaussian((px - lx) ** 2 + (py - ly) ** 2, sigma)
-            broad = min(broad / 4.8, 1.0)
+            broad = min(broad / 5.2, 1.0)
 
             detail = 0.0
             for lx, ly, sigma, weight in detail_lobes:
                 detail += weight * gaussian((px - lx) ** 2 + (py - ly) ** 2, sigma)
-            detail = min(detail / 2.5, 1.0)
+            detail = min(detail / 2.8, 1.0)
 
-            longitudinal_noise = 0.88 + 0.12 * math.sin(py * 8.0 + math.sin(px * 4.0))
+            longitudinal_noise = 0.90 + 0.10 * math.sin(py * 8.4 + math.sin(px * 3.8))
             density = (
                 lateral_envelope
                 * end_envelope
-                * (0.20 + 0.60 * broad + 0.20 * detail)
+                * (0.16 + 0.64 * broad + 0.20 * detail)
                 * longitudinal_noise
             )
-            density *= 0.84 + 0.16 * smoothstep(0.0, 0.8, broad)
+            density *= 0.82 + 0.18 * smoothstep(0.0, 0.8, broad)
             alpha = min(max(maximum_alpha * density, 0.0), maximum_alpha)
 
             if (
@@ -155,12 +156,11 @@ def validate_pixels(name: str, pixels: bytes, maximum_alpha: float) -> None:
     allowed_maximum = int(math.ceil(maximum_alpha * 255.0))
     if observed_maximum_alpha > allowed_maximum:
         raise RuntimeError(f"{name}: alpha exceeds configured bucket maximum")
-    if nonzero_alpha < WIDTH * HEIGHT * 0.10:
+    if nonzero_alpha < WIDTH * HEIGHT * 0.08:
         raise RuntimeError(f"{name}: texture contains too little visible structure")
 
 
 def make_obj(path: Path, texture_name: str) -> None:
-    # Unit quad: width follows local X and trail length follows local Y.
     vertices = [
         (-0.5, -0.5, 0.0, 0.0, 0.0, -1.0, 0.0, 0.0),
         (0.5, -0.5, 0.0, 0.0, 0.0, -1.0, 1.0, 0.0),
@@ -174,7 +174,7 @@ def make_obj(path: Path, texture_name: str) -> None:
         "OBJ",
         f"TEXTURE {texture_name}",
         f"TEXTURE_LIT {texture_name}",
-        "GLOBAL_luminance 120",
+        f"GLOBAL_luminance {LUMINANCE_NITS}",
         "GLOBAL_no_shadow",
         "GLOBAL_specular 0.0",
         f"POINT_COUNTS {len(vertices)} 0 0 {len(indices)}",
@@ -219,8 +219,8 @@ def validate_obj(path: Path, texture_name: str) -> None:
         raise RuntimeError(f"{path.name}: expected albedo texture reference is missing")
     if f"TEXTURE_LIT {texture_name}" not in lines:
         raise RuntimeError(f"{path.name}: expected neutral lit texture reference is missing")
-    if "GLOBAL_luminance 120" not in lines:
-        raise RuntimeError(f"{path.name}: expected neutral luminance directive is missing")
+    if f"GLOBAL_luminance {LUMINANCE_NITS}" not in lines:
+        raise RuntimeError(f"{path.name}: expected v4.2 luminance directive is missing")
     if "ATTR_no_cull" not in lines or "ATTR_blend" not in lines or "ATTR_no_shadow" not in lines:
         raise RuntimeError(f"{path.name}: required transparency attributes are missing")
     if not any("ffatmo/contrail_debug/width" in line for line in lines):
@@ -243,7 +243,7 @@ def main() -> int:
             object_name = f"{stem}.obj"
             texture_path = args.output / texture_name
             object_path = args.output / object_name
-            pixels = make_texture(maximum_alpha, 14100 + bucket * 31 + variant_index * 109)
+            pixels = make_texture(maximum_alpha, 14200 + bucket * 19 + variant_index * 107)
             validate_pixels(texture_name, pixels, maximum_alpha)
             write_png(texture_path, WIDTH, HEIGHT, pixels)
             make_obj(object_path, texture_name)
@@ -251,11 +251,10 @@ def main() -> int:
             generated.extend((texture_name, object_name))
 
     (args.output / "ASSET_INFO.txt").write_text(
-        "FFAtmo Contrail Renderer Foundation v4.1 deterministic segment assets.\n"
-        "Eight neutral-white elongated assets: four alpha buckets and two variants.\n"
-        "Width and trail length are controlled independently by XPLM instance datarefs.\n"
-        "A low neutral lit overlay prevents black or olive camera-angle shading.\n"
-        "OBJ8 LOD, animation balance, luminance, and transparency commands validated.\n"
+        "FFAtmo Renderer Foundation v4.2 deterministic asset set.\n"
+        "Lower-alpha narrow segments reduce interaction with aircraft exhaust heat haze.\n"
+        f"Neutral daytime luminance: {LUMINANCE_NITS} nits.\n"
+        "Eight assets: four optical buckets and two deterministic variants.\n"
         + "\n".join(generated)
         + "\n",
         encoding="utf-8",

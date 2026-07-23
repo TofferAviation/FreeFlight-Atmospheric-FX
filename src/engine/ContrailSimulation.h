@@ -1,6 +1,7 @@
 #pragma once
 
 #include "diagnostics/ReplayRunner.h"
+#include "engine/WakeFluidSolver.h"
 
 #include <cstdint>
 #include <filesystem>
@@ -40,8 +41,11 @@ struct ContrailParcel {
     float sourceTemperatureK = 0.0f;
     float sourceRelativeHumidityIcePercent = 0.0f;
 
-    // Live-renderer wake state. Offline baseline construction leaves these at
-    // their neutral defaults, so accepted replay fixtures remain unchanged.
+    // Live-renderer wake state. Offline baseline construction leaves this at
+    // neutral defaults, so accepted replay fixtures remain unchanged.
+    WakeFluidState wakeFluid {};
+
+    // Compatibility diagnostics retained for the renderer and earlier tests.
     Vec3d vortexRightWorld {1.0, 0.0, 0.0};
     float vortexSide = 0.0f;
     float appliedVortexLateralM = 0.0f;
@@ -63,6 +67,12 @@ struct ContrailTimelineSample {
     float meanRadiusM = 0.0f;
     float maximumParcelAgeSeconds = 0.0f;
     double visibleTrailLengthM = 0.0;
+    float meanWakeCirculationM2ps = 0.0f;
+    float meanWakeCoreRadiusM = 0.0f;
+    float meanWakeInducedSpeedMps = 0.0f;
+    float meanWakeDescentMps = 0.0f;
+    float maximumWakeLateralDisplacementM = 0.0f;
+    float maximumWakeVerticalDisplacementM = 0.0f;
     bool persistentEnvironment = false;
     bool physicsFrozen = false;
 };
@@ -78,12 +88,19 @@ struct ContrailSimulationSummary {
     std::uint64_t persistentEnvironmentSampleCount = 0;
     std::uint64_t frozenPhysicsSampleCount = 0;
     std::uint64_t capacityDropCount = 0;
+    std::uint64_t wakeFluidStepCount = 0;
     double firstFormationTimeSeconds = -1.0;
     double lastFormationTimeSeconds = -1.0;
     double maximumVisibleTrailLengthM = 0.0;
     float maximumTotalNormalizedIceMass = 0.0f;
     float maximumParcelAgeSeconds = 0.0f;
     float maximumFormationPotential = 0.0f;
+    float maximumWakeInitialCirculationM2ps = 0.0f;
+    float maximumWakeInducedSpeedMps = 0.0f;
+    float maximumWakeDescentMps = 0.0f;
+    float maximumWakeCoreRadiusM = 0.0f;
+    float maximumWakeLateralDisplacementM = 0.0f;
+    float maximumWakeVerticalDisplacementM = 0.0f;
     std::uint64_t deterministicHash = 0;
 };
 
@@ -99,9 +116,9 @@ ContrailSimulationResult simulateContrails(
     const ContrailSimulationSettings& settings = {});
 
 bool writeContrailSimulationSummary(const ContrailSimulationResult& result,
-                                    const diagnostics::ReplayMetadata& metadata,
-                                    const std::filesystem::path& outputPath,
-                                    std::string* error = nullptr);
+                                     const diagnostics::ReplayMetadata& metadata,
+                                     const std::filesystem::path& outputPath,
+                                     std::string* error = nullptr);
 
 bool writeContrailTimelineCsv(const ContrailSimulationResult& result,
                               const std::filesystem::path& outputPath,

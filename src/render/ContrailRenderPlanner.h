@@ -2,11 +2,17 @@
 
 #include "engine/SimulatorSnapshot.h"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <vector>
 
 namespace ffatmo::render {
+
+inline constexpr std::size_t kContrailOpacityBucketCount = 4;
+inline constexpr std::size_t kContrailTextureVariantCount = 2;
+inline constexpr std::size_t kContrailRenderAssetCount =
+    kContrailOpacityBucketCount * kContrailTextureVariantCount;
 
 enum class ContrailRenderLayer : std::uint8_t {
     Core = 0,
@@ -28,7 +34,9 @@ struct ContrailRenderSample {
     std::uint64_t sourceParcelId = 0;
     std::uint32_t engineIndex = 0;
     engine::Vec3d localPositionM {};
-    float radiusM = 0.0f;
+    engine::Vec3d trailTangentLocal {0.0, 0.0, -1.0};
+    float widthM = 0.0f;
+    float lengthM = 0.0f;
     float opacityStrength = 0.0f;
     float ageSeconds = 0.0f;
     float priority = 0.0f;
@@ -39,11 +47,14 @@ struct ContrailRenderSample {
 
 struct ContrailRenderPlannerSettings {
     std::size_t visibleCapacity = 1024;
-    std::size_t maximumSamplesPerSegment = 16;
+    std::size_t maximumSamplesPerSegment = 8;
     double maximumSegmentGapM = 250.0;
     float maximumAgeGapSeconds = 1.0f;
     float minimumOpticalDepth = 0.004f;
     float minimumOpacityStrength = 0.002f;
+    std::array<std::size_t, kContrailRenderAssetCount> assetCapacities {
+        192, 192, 192, 192, 192, 192, 192, 192
+    };
 };
 
 struct ContrailRenderPlannerStatistics {
@@ -57,6 +68,9 @@ struct ContrailRenderPlannerStatistics {
     std::size_t selectedHaloCount = 0;
     std::size_t streamBreakCount = 0;
     std::size_t capacityRejectedCount = 0;
+    std::size_t assetCapacityRejectedCount = 0;
+    std::array<std::size_t, kContrailOpacityBucketCount> generatedByBucket {};
+    std::array<std::size_t, kContrailRenderAssetCount> selectedByAsset {};
     double maximumSelectedSpacingM = 0.0;
     double maximumCurveDeviationM = 0.0;
     std::uint64_t deterministicHash = 0;

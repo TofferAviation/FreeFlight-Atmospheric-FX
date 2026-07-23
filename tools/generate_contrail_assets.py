@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate deterministic Renderer v4 OBJ8 contrail assets without third-party modules."""
+"""Generate deterministic Renderer v4.1 OBJ8 trail-segment assets."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from pathlib import Path
 WIDTH = 256
 HEIGHT = 256
 BORDER_FRACTION = 0.08
-ALPHA_LEVELS = (0.035, 0.060, 0.095, 0.140)
+ALPHA_LEVELS = (0.030, 0.052, 0.082, 0.120)
 VARIANTS = ("a", "b")
 
 
@@ -54,25 +54,26 @@ def gaussian(distance2: float, sigma: float) -> float:
 
 def make_texture(maximum_alpha: float, seed: int) -> bytes:
     rng = random.Random(seed)
+    centreline_phase = rng.uniform(0.0, math.tau)
+    edge_phase = rng.uniform(0.0, math.tau)
     broad_lobes = [
         (
-            rng.uniform(-0.32, 0.32),
-            rng.uniform(-0.32, 0.32),
-            rng.uniform(0.22, 0.48),
-            rng.uniform(0.55, 1.00),
+            rng.uniform(-0.20, 0.20),
+            rng.uniform(-0.82, 0.82),
+            rng.uniform(0.16, 0.34),
+            rng.uniform(0.45, 1.00),
         )
-        for _ in range(12)
+        for _ in range(18)
     ]
     detail_lobes = [
         (
-            rng.uniform(-0.58, 0.58),
-            rng.uniform(-0.58, 0.58),
-            rng.uniform(0.055, 0.18),
-            rng.uniform(0.10, 0.38),
+            rng.uniform(-0.48, 0.48),
+            rng.uniform(-0.90, 0.90),
+            rng.uniform(0.045, 0.13),
+            rng.uniform(0.08, 0.30),
         )
-        for _ in range(48)
+        for _ in range(56)
     ]
-    angular_phases = [rng.uniform(0.0, math.tau) for _ in range(4)]
 
     pixels = bytearray()
     border_pixels = int(round(WIDTH * BORDER_FRACTION))
@@ -80,35 +81,40 @@ def make_texture(maximum_alpha: float, seed: int) -> bytes:
         py = (2.0 * (y + 0.5) / HEIGHT) - 1.0
         for x in range(WIDTH):
             px = (2.0 * (x + 0.5) / WIDTH) - 1.0
-            radius = math.sqrt(px * px + py * py)
-            angle = math.atan2(py, px)
 
-            # A slowly varying edge radius breaks the silhouette without forming an oval.
-            edge_radius = (
-                0.78
-                + 0.055 * math.sin(3.0 * angle + angular_phases[0])
-                + 0.035 * math.sin(5.0 * angle + angular_phases[1])
-                + 0.020 * math.sin(9.0 * angle + angular_phases[2])
-                + 0.012 * math.sin(13.0 * angle + angular_phases[3])
+            centre_offset = (
+                0.055 * math.sin(py * 4.8 + centreline_phase)
+                + 0.022 * math.sin(py * 11.0 + edge_phase)
             )
-            envelope = 1.0 - smoothstep(0.16, max(edge_radius, 0.55), radius)
+            lateral = abs(px - centre_offset)
+            edge_width = (
+                0.72
+                + 0.055 * math.sin(py * 5.3 + edge_phase)
+                + 0.025 * math.sin(py * 12.7 + centreline_phase)
+            )
+            lateral_envelope = 1.0 - smoothstep(0.18, max(edge_width, 0.52), lateral)
+            end_envelope = 1.0 - smoothstep(0.72, 0.96, abs(py))
 
             broad = 0.0
             for lx, ly, sigma, weight in broad_lobes:
                 broad += weight * gaussian((px - lx) ** 2 + (py - ly) ** 2, sigma)
-            broad = min(broad / 5.2, 1.0)
+            broad = min(broad / 4.8, 1.0)
 
             detail = 0.0
             for lx, ly, sigma, weight in detail_lobes:
                 detail += weight * gaussian((px - lx) ** 2 + (py - ly) ** 2, sigma)
-            detail = min(detail / 2.8, 1.0)
+            detail = min(detail / 2.5, 1.0)
 
-            low_frequency = 0.86 + 0.14 * math.sin(px * 4.7 + math.sin(py * 3.3))
-            density = envelope * (0.18 + 0.62 * broad + 0.20 * detail) * low_frequency
-            density *= 0.82 + 0.18 * smoothstep(0.0, 0.8, broad)
+            longitudinal_noise = 0.88 + 0.12 * math.sin(py * 8.0 + math.sin(px * 4.0))
+            density = (
+                lateral_envelope
+                * end_envelope
+                * (0.20 + 0.60 * broad + 0.20 * detail)
+                * longitudinal_noise
+            )
+            density *= 0.84 + 0.16 * smoothstep(0.0, 0.8, broad)
             alpha = min(max(maximum_alpha * density, 0.0), maximum_alpha)
 
-            # Guarantee a fully transparent texture border and white transparent RGB.
             if (
                 x < border_pixels
                 or y < border_pixels
@@ -149,18 +155,17 @@ def validate_pixels(name: str, pixels: bytes, maximum_alpha: float) -> None:
     allowed_maximum = int(math.ceil(maximum_alpha * 255.0))
     if observed_maximum_alpha > allowed_maximum:
         raise RuntimeError(f"{name}: alpha exceeds configured bucket maximum")
-    if nonzero_alpha < WIDTH * HEIGHT * 0.08:
+    if nonzero_alpha < WIDTH * HEIGHT * 0.10:
         raise RuntimeError(f"{name}: texture contains too little visible structure")
 
 
 def make_obj(path: Path, texture_name: str) -> None:
-    # A square quad with local -Z normal. Runtime heading/pitch keeps it perpendicular
-    # to the camera, while deterministic roll rotates only the irregular alpha pattern.
+    # Unit quad: width follows local X and trail length follows local Y.
     vertices = [
-        (-1.0, -1.0, 0.0, 0.0, 0.0, -1.0, 0.0, 0.0),
-        (1.0, -1.0, 0.0, 0.0, 0.0, -1.0, 1.0, 0.0),
-        (1.0, 1.0, 0.0, 0.0, 0.0, -1.0, 1.0, 1.0),
-        (-1.0, 1.0, 0.0, 0.0, 0.0, -1.0, 0.0, 1.0),
+        (-0.5, -0.5, 0.0, 0.0, 0.0, -1.0, 0.0, 0.0),
+        (0.5, -0.5, 0.0, 0.0, 0.0, -1.0, 1.0, 0.0),
+        (0.5, 0.5, 0.0, 0.0, 0.0, -1.0, 1.0, 1.0),
+        (-0.5, 0.5, 0.0, 0.0, 0.0, -1.0, 0.0, 1.0),
     ]
     indices = [0, 2, 1, 0, 3, 2]
     lines = [
@@ -168,6 +173,8 @@ def make_obj(path: Path, texture_name: str) -> None:
         "800",
         "OBJ",
         f"TEXTURE {texture_name}",
+        f"TEXTURE_LIT {texture_name}",
+        "GLOBAL_luminance 120",
         "GLOBAL_no_shadow",
         "GLOBAL_specular 0.0",
         f"POINT_COUNTS {len(vertices)} 0 0 {len(indices)}",
@@ -180,11 +187,14 @@ def make_obj(path: Path, texture_name: str) -> None:
         [
             "ATTR_LOD 0 120000",
             "ANIM_begin",
-            "ANIM_scale 0.001 0.001 0.001 24 24 24 0 24 ffatmo/contrail_debug/scale",
+            "ANIM_scale 0.001 1 1 32 1 1 0 32 ffatmo/contrail_debug/width",
+            "ANIM_begin",
+            "ANIM_scale 1 0.001 1 1 32 1 0 32 ffatmo/contrail_debug/length",
             "ATTR_no_cull",
             "ATTR_blend",
             "ATTR_no_shadow",
             f"TRIS 0 {len(indices)}",
+            "ANIM_end",
             "ANIM_end",
             "",
         ]
@@ -201,14 +211,22 @@ def validate_obj(path: Path, texture_name: str) -> None:
     ]
     if not commands or not commands[0].startswith("ATTR_LOD "):
         raise RuntimeError(f"{path.name}: ATTR_LOD must be the first command")
-    if lines.count("ANIM_begin") != lines.count("ANIM_end"):
-        raise RuntimeError(f"{path.name}: unbalanced ANIM_begin/ANIM_end")
+    if lines.count("ANIM_begin") != 2 or lines.count("ANIM_end") != 2:
+        raise RuntimeError(f"{path.name}: expected two balanced scale animation groups")
     if sum(1 for line in lines if line.startswith("TRIS ")) != 1:
         raise RuntimeError(f"{path.name}: expected exactly one TRIS command")
     if f"TEXTURE {texture_name}" not in lines:
-        raise RuntimeError(f"{path.name}: expected texture reference is missing")
+        raise RuntimeError(f"{path.name}: expected albedo texture reference is missing")
+    if f"TEXTURE_LIT {texture_name}" not in lines:
+        raise RuntimeError(f"{path.name}: expected neutral lit texture reference is missing")
+    if "GLOBAL_luminance 120" not in lines:
+        raise RuntimeError(f"{path.name}: expected neutral luminance directive is missing")
     if "ATTR_no_cull" not in lines or "ATTR_blend" not in lines or "ATTR_no_shadow" not in lines:
         raise RuntimeError(f"{path.name}: required transparency attributes are missing")
+    if not any("ffatmo/contrail_debug/width" in line for line in lines):
+        raise RuntimeError(f"{path.name}: width dataref scale is missing")
+    if not any("ffatmo/contrail_debug/length" in line for line in lines):
+        raise RuntimeError(f"{path.name}: length dataref scale is missing")
 
 
 def main() -> int:
@@ -225,7 +243,7 @@ def main() -> int:
             object_name = f"{stem}.obj"
             texture_path = args.output / texture_name
             object_path = args.output / object_name
-            pixels = make_texture(maximum_alpha, 10400 + bucket * 17 + variant_index * 101)
+            pixels = make_texture(maximum_alpha, 14100 + bucket * 31 + variant_index * 109)
             validate_pixels(texture_name, pixels, maximum_alpha)
             write_png(texture_path, WIDTH, HEIGHT, pixels)
             make_obj(object_path, texture_name)
@@ -233,10 +251,11 @@ def main() -> int:
             generated.extend((texture_name, object_name))
 
     (args.output / "ASSET_INFO.txt").write_text(
-        "FFAtmo Contrail Renderer v4 deterministic asset set.\n"
-        "Eight camera-facing neutral-white assets: four alpha buckets and two variants.\n"
-        "All textures use white RGB, alpha-only structure, and a transparent outer border.\n"
-        "OBJ8 LOD, animation balance, texture references, and transparency commands validated.\n"
+        "FFAtmo Contrail Renderer Foundation v4.1 deterministic segment assets.\n"
+        "Eight neutral-white elongated assets: four alpha buckets and two variants.\n"
+        "Width and trail length are controlled independently by XPLM instance datarefs.\n"
+        "A low neutral lit overlay prevents black or olive camera-angle shading.\n"
+        "OBJ8 LOD, animation balance, luminance, and transparency commands validated.\n"
         + "\n".join(generated)
         + "\n",
         encoding="utf-8",

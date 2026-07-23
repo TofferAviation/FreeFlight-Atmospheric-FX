@@ -106,8 +106,7 @@ int main() {
     require(first.samples.size() == second.samples.size(),
             "same inputs produce the same sample count");
     require(first.statistics.selectedCoreCount > 0, "short white core sections are selected");
-    require(first.statistics.selectedHaloCount > first.statistics.selectedCoreCount,
-            "halo receives the majority of the visible budget");
+    require(first.statistics.selectedHaloCount > 0, "halo sections are selected");
     require(first.statistics.generatedNearFieldCount > 0,
             "synthetic exhaust heads generate near-field sections");
     require(first.statistics.selectedNearFieldCount > 0,

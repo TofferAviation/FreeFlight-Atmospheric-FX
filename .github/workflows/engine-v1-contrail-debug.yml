@@ -115,17 +115,17 @@ jobs:
           $testExit = $LASTEXITCODE
           if ($testExit -ne 0) { exit $testExit }
           $plugin = "package/FFAtmoContrailDebug/64/win.xpl"
-          if (-not (Test-Path $plugin)) { throw "Contrail Renderer v4 win.xpl was not produced" }
-          if ((Get-Item $plugin).Length -lt 100000) { throw "Contrail Renderer v4 win.xpl is unexpectedly small" }
+          if (-not (Test-Path $plugin)) { throw "Renderer Foundation v4.1 win.xpl was not produced" }
+          if ((Get-Item $plugin).Length -lt 100000) { throw "Renderer Foundation v4.1 win.xpl is unexpectedly small" }
 
-      - name: Generate and validate Renderer v4 assets
+      - name: Generate and validate Renderer Foundation v4.1 assets
         shell: pwsh
         run: |
           python tools/generate_contrail_assets.py generated-contrail-assets
           $objects = Get-ChildItem generated-contrail-assets -Filter "contrail_core_*.obj"
           $textures = Get-ChildItem generated-contrail-assets -Filter "contrail_core_*.png"
-          if ($objects.Count -ne 8) { throw "Expected eight Renderer v4 contrail OBJ files" }
-          if ($textures.Count -ne 8) { throw "Expected eight Renderer v4 contrail PNG files" }
+          if ($objects.Count -ne 8) { throw "Expected eight Renderer v4.1 contrail OBJ files" }
+          if ($textures.Count -ne 8) { throw "Expected eight Renderer v4.1 contrail PNG files" }
           foreach ($texture in $textures) {
             if ($texture.Length -lt 1000) { throw "Generated texture is unexpectedly small: $($texture.Name)" }
           }
@@ -133,6 +133,9 @@ jobs:
             $lines = Get-Content $object.FullName
             if (-not ($lines -match '^ATTR_LOD ')) { throw "Missing ATTR_LOD: $($object.Name)" }
             if (-not ($lines -match '^ATTR_blend$')) { throw "Missing ATTR_blend: $($object.Name)" }
+            if (-not ($lines -match '^GLOBAL_luminance 120$')) { throw "Missing v4.1 neutral luminance: $($object.Name)" }
+            if (-not ($lines -match 'ffatmo/contrail_debug/width')) { throw "Missing width scale: $($object.Name)" }
+            if (-not ($lines -match 'ffatmo/contrail_debug/length')) { throw "Missing length scale: $($object.Name)" }
           }
 
       - name: Upload build diagnostics
@@ -144,7 +147,7 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
-      - name: Assemble Renderer v4 package
+      - name: Assemble Renderer Foundation v4.1 package
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path artifact/FFAtmoContrailDebug/64 | Out-Null
@@ -152,7 +155,10 @@ jobs:
           Copy-Item package/FFAtmoContrailDebug/64/win.xpl artifact/FFAtmoContrailDebug/64/win.xpl -Force
           Copy-Item generated-contrail-assets/* artifact/FFAtmoContrailDebug/assets/ -Force
           @'
-          FFAtmo Engine v1 Contrail Renderer v4
+          FFAtmo Renderer Foundation v4.1
+
+          PURPOSE
+          This is the final renderer-foundation correction before Wake Fluid Simulation v1.
 
           INSTALL
           1. Close X-Plane.
@@ -161,32 +167,35 @@ jobs:
              X-Plane 12/Resources/plugins/
           4. Keep the included assets folder beside the 64 folder.
 
-          V4 CHANGES
-          - Eight validated neutral-white sprite assets.
-          - Explicit camera-facing world orientation.
-          - Deterministic curved interpolation for each engine stream.
-          - Tight young cores, age-dependent core/halo growth, and smooth spawn fade.
-          - Capacity-aware two-engine protection and back-to-front transparency ordering.
-          - Renderer-planner and billboard diagnostics in the exported report.
+          V4.1 CORE CHANGES
+          - Elongated trail-aligned segments replace circular puff stamps.
+          - Width and trail length are scaled independently.
+          - Stable render IDs retain persistent XPLM instance slots between frames.
+          - Planner respects every physical asset-pool limit before rendering.
+          - A neutral lit overlay prevents black or olive angle-dependent shading.
+          - Old dense cores fade while the soft halo becomes dominant.
+          - Segment generation is reduced before the 1024-instance selection stage.
 
           TEST
-          1. Load the Boeing 737-800NG in Forced Dry Preview.
+          1. Load the B738 in Forced Dry Preview.
           2. Confirm no emission while parked or taxiing.
           3. Climb above 120 m AGL and 65 m/s TAS.
-          4. The status panel must say WORLD V4 READY.
-          5. Fly straight for 60 seconds, then pause and orbit the trail.
-          6. Look for two tight young cores, soft progressive widening, no green/olive
-             cards, no obvious bead chain, no edge-on sprites, and correct depth occlusion.
-          7. Make one 20-30 degree bank turn and confirm both engine streams remain separate.
+          4. Fly straight for 45-60 seconds and orbit the trail while paused.
+          5. Make one gentle 20-30 degree bank turn.
+
+          PASS TARGET
+          - no black or olive core
+          - no chain of round cards
+          - no large density sections appearing/disappearing during camera orbit
+          - two separate engine trails with continuous near-field segments
+          - world_renderer_pool_capacity_drop_count remains 0
 
           SEND BACK
-          - close rear-oblique screenshot at 3-5 seconds
-          - direct rear screenshot at 10-15 seconds
-          - distant rear-oblique and side/top screenshot at 30-60 seconds
+          - one short video or close and distant screenshots
           - X-Plane 12/Log.txt
           - FFAtmoContrailDebug/reports/contrail_visual_debug.txt
           '@ | Set-Content artifact/FFAtmoContrailDebug/README_TESTING.txt -Encoding utf8
-          "renderer=engine-v1-world-renderer-v4" | Set-Content artifact/FFAtmoContrailDebug/BUILD_INFO.txt -Encoding utf8
+          "renderer=engine-v1-renderer-foundation-v4.1" | Set-Content artifact/FFAtmoContrailDebug/BUILD_INFO.txt -Encoding utf8
           "git_revision=${{ github.sha }}" | Add-Content artifact/FFAtmoContrailDebug/BUILD_INFO.txt -Encoding utf8
 
       - name: Upload live contrail visual debug plugin

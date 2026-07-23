@@ -19,13 +19,13 @@ void require(bool condition, const std::string& message) {
 }
 
 ffatmo::render::ContrailRenderInput makeInput(std::uint64_t id,
-                                             std::uint32_t engineIndex,
-                                             double x,
-                                             double y,
-                                             double z,
-                                             float age,
-                                             float optical = 0.16f,
-                                             bool syntheticHead = false) {
+                                              std::uint32_t engineIndex,
+                                              double x,
+                                              double y,
+                                              double z,
+                                              float age,
+                                              float optical = 0.16f,
+                                              bool syntheticHead = false) {
     ffatmo::render::ContrailRenderInput input;
     input.sourceParcelId = id;
     input.engineIndex = engineIndex;
@@ -77,10 +77,10 @@ int main() {
     std::uint64_t id = 1;
     for (std::uint32_t engineIndex = 0; engineIndex < 2; ++engineIndex) {
         const double x = engineIndex == 0 ? -5.0 : 5.0;
-        for (int parcel = 0; parcel < 18; ++parcel) {
-            const float age = 7.2f - static_cast<float>(parcel) * 0.4f;
+        for (int parcel = 0; parcel < 30; ++parcel) {
+            const float age = 11.6f - static_cast<float>(parcel) * 0.4f;
             inputs.push_back(makeInput(
-                id++, engineIndex, x, 1000.0 - age * 0.35, -age * 50.0, age));
+                id++, engineIndex, x, 1000.0 - age * 0.35, -age * 50.0, age, 0.30f));
         }
         inputs.push_back(makeInput(
             0xfff0000000000000ull + engineIndex,
@@ -102,24 +102,30 @@ int main() {
 
     require(!first.samples.empty(), "planner produces visible trail sections");
     require(first.statistics.deterministicHash == second.statistics.deterministicHash,
-            "same inputs produce the same v4.2 plan hash");
+            "same inputs produce the same v4.3 plan hash");
     require(first.samples.size() == second.samples.size(),
             "same inputs produce the same sample count");
-    require(first.statistics.selectedCoreCount > 0, "young core sections are selected");
-    require(first.statistics.selectedHaloCount > 0, "aged halo sections are selected");
+    require(first.statistics.selectedCoreCount > 0, "short white core sections are selected");
+    require(first.statistics.selectedHaloCount > first.statistics.selectedCoreCount,
+            "halo receives the majority of the visible budget");
     require(first.statistics.generatedNearFieldCount > 0,
             "synthetic exhaust heads generate near-field sections");
     require(first.statistics.selectedNearFieldCount > 0,
             "near-field sections survive continuity-first selection");
     require(first.statistics.selectedSampleCount <= settings.visibleCapacity,
             "global visible capacity is respected");
+    require(first.statistics.selectedCoreCount <= static_cast<std::size_t>(
+                std::floor(settings.visibleCapacity * settings.maximumCoreShare)),
+            "core selection remains inside the configured share");
     require(first.statistics.maximumSelectedSpacingM <=
                 settings.maximumSelectedSpacingM + 1.0e-6,
             "selected streams never exceed the hard continuity spacing");
     require(first.statistics.maximumCurveDeviationM <= 11.0 + 1.0e-6,
             "curved interpolation is clamped to 22 percent of a 50 metre segment");
     require(first.statistics.generatedSampleCount < inputs.size() * 20,
-            "v4.2 avoids runaway near-field over-generation");
+            "v4.3 avoids runaway near-field over-generation");
+    require(first.statistics.coreBucketClampCount > 0,
+            "high optical input exercises the white-core opacity clamp");
 
     std::unordered_set<std::uint64_t> renderIds;
     std::array<std::size_t, render::kContrailRenderAssetCount> observedByAsset {};
@@ -134,12 +140,16 @@ int main() {
                     "right-engine interpolation never crosses into the left stream");
         }
         require(sample.widthM >= 0.30f && sample.widthM <= 24.0f,
-                "section width stays inside v4.2 hard limits");
+                "section width stays inside v4.3 hard limits");
         require(sample.lengthM >= 0.60f && sample.lengthM <= 30.0f,
-                "section length stays inside v4.2 hard limits");
+                "section length stays inside v4.3 hard limits");
         if (sample.layer == render::ContrailRenderLayer::Core) {
             require(sample.ageSeconds < settings.maximumCoreAgeSeconds,
-                    "old dense cores are removed before the halo-dominant phase");
+                    "dense centre ends by twelve seconds");
+            require(sample.opacityBucket <= settings.maximumCoreOpacityBucket,
+                    "core never enters the dark high-opacity buckets");
+            require(sample.lengthM <= 14.0f + 1.0e-6f,
+                    "core sections remain short enough to avoid tube-like strands");
         }
         const std::size_t assetIndex =
             static_cast<std::size_t>(sample.opacityBucket) *
@@ -179,6 +189,8 @@ int main() {
             "round-robin continuity selection protects both engines");
     require(limited.statistics.capacityRejectedCount > 0,
             "old sections are rejected when the visible budget is full");
+    require(limited.statistics.selectedHaloCount >= limited.statistics.selectedCoreCount,
+            "capacity pressure never makes the old dense core dominant");
     for (std::size_t assetIndex = 0;
          assetIndex < limited.statistics.selectedByAsset.size();
          ++assetIndex) {
@@ -196,6 +208,6 @@ int main() {
     require(brokenPlan.statistics.streamBreakCount == 1,
             "segments beyond the 250 metre continuity limit are not bridged");
 
-    std::cout << "FFAtmo Renderer Foundation v4.2 tests passed\n";
+    std::cout << "FFAtmo Renderer Foundation v4.3 white-core tests passed\n";
     return 0;
 }

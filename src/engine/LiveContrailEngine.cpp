@@ -51,6 +51,32 @@ float interpolateProfile(const std::array<float, kMaximumAtmosphereLevels>& alti
     return values[count - 1];
 }
 
+float interpolateDirectionProfile(
+    const std::array<float, kMaximumAtmosphereLevels>& altitude,
+    const std::array<float, kMaximumAtmosphereLevels>& directionDeg,
+    std::uint32_t count,
+    float targetAltitude,
+    float fallbackDeg) {
+    count = std::min<std::uint32_t>(count, static_cast<std::uint32_t>(altitude.size()));
+    if (count == 0) return fallbackDeg;
+    if (count == 1 || targetAltitude <= altitude[0]) return directionDeg[0];
+    for (std::uint32_t index = 1; index < count; ++index) {
+        if (targetAltitude <= altitude[index]) {
+            const float span = altitude[index] - altitude[index - 1];
+            if (std::abs(span) < 0.001f) return directionDeg[index];
+            const float ratio = clamp01((targetAltitude - altitude[index - 1]) / span);
+            const double first = static_cast<double>(directionDeg[index - 1]) * kPi / 180.0;
+            const double second = static_cast<double>(directionDeg[index]) * kPi / 180.0;
+            const double x = (1.0 - ratio) * std::sin(first) + ratio * std::sin(second);
+            const double z = (1.0 - ratio) * std::cos(first) + ratio * std::cos(second);
+            double angle = std::atan2(x, z) * 180.0 / kPi;
+            if (angle < 0.0) angle += 360.0;
+            return static_cast<float>(angle);
+        }
+    }
+    return directionDeg[count - 1];
+}
+
 float engineActivity(const EngineSnapshot& engine,
                      const ContrailSimulationSettings& settings) {
     if (engine.running == 0u) return 0.0f;
@@ -138,32 +164,14 @@ Vec3d rotateBodyOffsetToEnu(const Vec3d& body,
     return {localX, localY, -localZ};
 }
 
-void applyWakeRollup(ContrailParcel& parcel) {
-    if (std::abs(parcel.vortexSide) < 0.5f) return;
-
-    const float age = parcel.ageSeconds;
-    const float capture = smoothstep(1.5f, 16.0f, age);
-    const float decay = std::exp(-age / 58.0f);
-    const float phase = age * 0.44f +
-        (parcel.vortexSide > 0.0f ? static_cast<float>(kPi) : 0.0f);
-
-    // Move both engine trails inward while adding a damped counter-rotating
-    // orbit around the wake core. Applied deltas make this independent of frame
-    // rate and keep each parcel deterministic.
-    const float desiredLateral =
-        -parcel.vortexSide * 2.8f * capture +
-        parcel.vortexSide * 1.35f * std::sin(phase) * capture * decay;
-    const float desiredVertical =
-        -2.25f * capture +
-        1.10f * std::cos(phase) * capture * decay;
-
-    const float lateralDelta = desiredLateral - parcel.appliedVortexLateralM;
-    const float verticalDelta = desiredVertical - parcel.appliedVortexVerticalM;
-    parcel.worldPositionM.x += parcel.vortexRightWorld.x * lateralDelta;
-    parcel.worldPositionM.y += parcel.vortexRightWorld.y * lateralDelta + verticalDelta;
-    parcel.worldPositionM.z += parcel.vortexRightWorld.z * lateralDelta;
-    parcel.appliedVortexLateralM = desiredLateral;
-    parcel.appliedVortexVerticalM = desiredVertical;
+Vec3d shearVelocityWorld(float speedMps, float directionDegTrue) {
+    if (!finite(speedMps) || speedMps <= 0.0f || !finite(directionDegTrue)) return {};
+    const double radians = static_cast<double>(directionDegTrue) * kPi / 180.0;
+    return {
+        static_cast<double>(speedMps) * std::sin(radians),
+        0.0,
+        static_cast<double>(speedMps) * std::cos(radians)
+    };
 }
 
 void hashBytes(std::uint64_t& hash, const void* data, std::size_t size) {
@@ -194,6 +202,12 @@ void hashTimelineSample(std::uint64_t& hash, const ContrailTimelineSample& sampl
     hashValue(hash, sample.meanRadiusM);
     hashValue(hash, sample.maximumParcelAgeSeconds);
     hashValue(hash, sample.visibleTrailLengthM);
+    hashValue(hash, sample.meanWakeCirculationM2ps);
+    hashValue(hash, sample.meanWakeCoreRadiusM);
+    hashValue(hash, sample.meanWakeInducedSpeedMps);
+    hashValue(hash, sample.meanWakeDescentMps);
+    hashValue(hash, sample.maximumWakeLateralDisplacementM);
+    hashValue(hash, sample.maximumWakeVerticalDisplacementM);
     const std::uint8_t flags[] {
         static_cast<std::uint8_t>(sample.persistentEnvironment),
         static_cast<std::uint8_t>(sample.physicsFrozen)
@@ -210,6 +224,11 @@ void measureParcels(const std::vector<ContrailParcel>& parcels,
     std::array<bool, kMaximumRecordedEngines> hasPreviousVisible {};
     double opticalDepthTotal = 0.0;
     double radiusTotal = 0.0;
+    double circulationTotal = 0.0;
+    double coreRadiusTotal = 0.0;
+    double inducedSpeedTotal = 0.0;
+    double descentTotal = 0.0;
+    std::size_t wakeCount = 0;
 
     for (const auto& parcel : parcels) {
         timeline.totalNormalizedIceMass += parcel.normalizedIceMass;
@@ -217,6 +236,20 @@ void measureParcels(const std::vector<ContrailParcel>& parcels,
         radiusTotal += parcel.radiusM;
         timeline.maximumParcelAgeSeconds = std::max(
             timeline.maximumParcelAgeSeconds, parcel.ageSeconds);
+
+        if (parcel.wakeFluid.initialized) {
+            circulationTotal += parcel.wakeFluid.circulationM2ps;
+            coreRadiusTotal += parcel.wakeFluid.coreRadiusM;
+            inducedSpeedTotal += parcel.wakeFluid.inducedSpeedMps;
+            descentTotal += parcel.wakeFluid.wakeDescentMps;
+            ++wakeCount;
+            timeline.maximumWakeLateralDisplacementM = std::max(
+                timeline.maximumWakeLateralDisplacementM,
+                std::abs(parcel.wakeFluid.lateralM - parcel.wakeFluid.initialLateralM));
+            timeline.maximumWakeVerticalDisplacementM = std::max(
+                timeline.maximumWakeVerticalDisplacementM,
+                std::abs(parcel.wakeFluid.verticalM - parcel.wakeFluid.initialVerticalM));
+        }
 
         if (parcel.opticalDepth < settings.minimumVisibleOpticalDepth ||
             parcel.engineIndex >= kMaximumRecordedEngines) {
@@ -237,6 +270,17 @@ void measureParcels(const std::vector<ContrailParcel>& parcels,
     const double count = static_cast<double>(parcels.size());
     timeline.meanOpticalDepth = static_cast<float>(opticalDepthTotal / count);
     timeline.meanRadiusM = static_cast<float>(radiusTotal / count);
+    if (wakeCount > 0) {
+        const double wakeCountDouble = static_cast<double>(wakeCount);
+        timeline.meanWakeCirculationM2ps = static_cast<float>(
+            circulationTotal / wakeCountDouble);
+        timeline.meanWakeCoreRadiusM = static_cast<float>(
+            coreRadiusTotal / wakeCountDouble);
+        timeline.meanWakeInducedSpeedMps = static_cast<float>(
+            inducedSpeedTotal / wakeCountDouble);
+        timeline.meanWakeDescentMps = static_cast<float>(
+            descentTotal / wakeCountDouble);
+    }
 }
 
 }  // namespace
@@ -264,6 +308,15 @@ void LiveContrailEngine::setSettings(const ContrailSimulationSettings& settings)
 void LiveContrailEngine::setEngineExhaustBodyOffsets(
     const std::vector<Vec3d>& offsetsBodyM) {
     engineExhaustBodyOffsets_ = offsetsBodyM;
+}
+
+void LiveContrailEngine::setWakeAircraftGeometry(float wingspanM, float referenceMassKg) {
+    wakeAircraft_.wingspanM = std::max(wingspanM, 0.0f);
+    wakeAircraft_.referenceMassKg = std::max(referenceMassKg, 0.0f);
+}
+
+void LiveContrailEngine::setWakeFluidSettings(const WakeFluidSettings& settings) {
+    wakeFluidSettings_ = settings;
 }
 
 Vec3d LiveContrailEngine::emissionPosition(
@@ -311,6 +364,43 @@ ContrailTimelineSample LiveContrailEngine::step(
     if (deltaSeconds > 0.0f) {
         if (timeline.formationPotential > 0.01f) ++summary_.formationSampleCount;
 
+        const auto& profile = snapshot.atmosphere.profile;
+        const float targetAltitude = static_cast<float>(normalized.altitudeMslM);
+        const float turbulence = std::clamp(interpolateProfile(
+            profile.windAltitudeMslM,
+            profile.turbulenceScale,
+            profile.windLevelCount,
+            targetAltitude,
+            0.0f), 0.0f, 1.0f);
+        const float shearSpeed = std::max(0.0f, interpolateProfile(
+            profile.windAltitudeMslM,
+            profile.shearSpeedMps,
+            profile.windLevelCount,
+            targetAltitude,
+            0.0f));
+        const float shearDirection = interpolateDirectionProfile(
+            profile.windAltitudeMslM,
+            profile.shearDirectionDegTrue,
+            profile.windLevelCount,
+            targetAltitude,
+            snapshot.headingDegTrue);
+
+        WakeFluidEnvironment wakeEnvironment;
+        wakeEnvironment.aircraftMassKg = snapshot.totalMassKg;
+        wakeEnvironment.trueAirspeedMps = snapshot.trueAirspeedMps > 1.0f
+            ? snapshot.trueAirspeedMps
+            : normalized.trueAirspeedMps;
+        wakeEnvironment.airDensityKgM3 = snapshot.atmosphere.densityKgM3;
+        wakeEnvironment.gravityMps2 = snapshot.atmosphere.gravityMps2 > 1.0f
+            ? snapshot.atmosphere.gravityMps2
+            : 9.80665f;
+        wakeEnvironment.normalLoadFactorG = snapshot.normalLoadFactorG > 0.05f
+            ? snapshot.normalLoadFactorG
+            : 1.0f;
+        wakeEnvironment.turbulenceScale = turbulence;
+        wakeEnvironment.shearVelocityWorldMps = shearVelocityWorld(
+            shearSpeed, shearDirection);
+
         const std::uint32_t engineCount = std::min<std::uint32_t>(
             snapshot.engineCount, static_cast<std::uint32_t>(snapshot.engines.size()));
         for (std::uint32_t engineIndex = 0; engineIndex < engineCount; ++engineIndex) {
@@ -341,13 +431,31 @@ ContrailTimelineSample LiveContrailEngine::step(
                 parcel.sourceTemperatureK = normalized.temperatureK;
                 parcel.sourceRelativeHumidityIcePercent =
                     normalized.relativeHumidityIcePercent;
-                parcel.vortexRightWorld = rotateBodyOffsetToEnu(
+
+                const Vec3d wakeRight = rotateBodyOffsetToEnu(
                     {1.0, 0.0, 0.0},
                     snapshot.headingDegTrue,
                     snapshot.pitchDeg,
                     snapshot.rollDeg);
+                const Vec3d wakeUp = rotateBodyOffsetToEnu(
+                    {0.0, 1.0, 0.0},
+                    snapshot.headingDegTrue,
+                    snapshot.pitchDeg,
+                    snapshot.rollDeg);
+                parcel.wakeFluid = initializeWakeFluidState(
+                    wakeAircraft_,
+                    wakeEnvironment,
+                    wakeRight,
+                    wakeUp,
+                    static_cast<float>(bodyOffset.x),
+                    static_cast<float>(bodyOffset.y),
+                    wakeFluidSettings_);
+                parcel.vortexRightWorld = parcel.wakeFluid.rightWorld;
                 parcel.vortexSide = bodyOffset.x < -0.05 ? -1.0f :
                                     (bodyOffset.x > 0.05 ? 1.0f : 0.0f);
+                summary_.maximumWakeInitialCirculationM2ps = std::max(
+                    summary_.maximumWakeInitialCirculationM2ps,
+                    parcel.wakeFluid.initialCirculationM2ps);
 
                 const float fuelFlowAssist = clamp01(
                     snapshot.engines[engineIndex].fuelFlowKgps / 1.5f);
@@ -363,13 +471,6 @@ ContrailTimelineSample LiveContrailEngine::step(
             }
         }
 
-        const auto& profile = snapshot.atmosphere.profile;
-        const float turbulence = std::clamp(interpolateProfile(
-            profile.windAltitudeMslM,
-            profile.turbulenceScale,
-            profile.windLevelCount,
-            static_cast<float>(normalized.altitudeMslM),
-            0.0f), 0.0f, 1.0f);
         const float relativeHumidityIce = normalized.relativeHumidityIcePercent;
         const float lifetime = dryLifetimeSeconds(relativeHumidityIce, settings_);
         const float supersaturation = std::max(
@@ -384,10 +485,38 @@ ContrailTimelineSample LiveContrailEngine::step(
             parcel.worldPositionM.y += windUpMps * deltaSeconds;
             parcel.worldPositionM.z += windNorthMps * deltaSeconds;
 
-            const float wakeDescent = settings_.initialWakeDescentMps *
-                std::exp(-parcel.ageSeconds / 28.0f);
-            parcel.worldPositionM.y -= wakeDescent * deltaSeconds;
-            applyWakeRollup(parcel);
+            const WakeFluidStepResult wakeStep = advanceWakeFluidState(
+                parcel.wakeFluid,
+                parcel.id,
+                parcel.ageSeconds,
+                deltaSeconds,
+                wakeEnvironment,
+                wakeFluidSettings_);
+            if (!wakeStep.finite) {
+                encounteredNonFinite_ = true;
+            } else if (parcel.wakeFluid.initialized) {
+                parcel.worldPositionM.x += wakeStep.worldDisplacementM.x;
+                parcel.worldPositionM.y += wakeStep.worldDisplacementM.y;
+                parcel.worldPositionM.z += wakeStep.worldDisplacementM.z;
+                ++summary_.wakeFluidStepCount;
+                summary_.maximumWakeInducedSpeedMps = std::max(
+                    summary_.maximumWakeInducedSpeedMps, wakeStep.inducedSpeedMps);
+                summary_.maximumWakeDescentMps = std::max(
+                    summary_.maximumWakeDescentMps, wakeStep.wakeDescentMps);
+                summary_.maximumWakeCoreRadiusM = std::max(
+                    summary_.maximumWakeCoreRadiusM, wakeStep.coreRadiusM);
+            }
+
+            parcel.appliedVortexLateralM =
+                parcel.wakeFluid.lateralM - parcel.wakeFluid.initialLateralM;
+            parcel.appliedVortexVerticalM =
+                parcel.wakeFluid.verticalM - parcel.wakeFluid.initialVerticalM;
+            summary_.maximumWakeLateralDisplacementM = std::max(
+                summary_.maximumWakeLateralDisplacementM,
+                std::abs(parcel.appliedVortexLateralM));
+            summary_.maximumWakeVerticalDisplacementM = std::max(
+                summary_.maximumWakeVerticalDisplacementM,
+                std::abs(parcel.appliedVortexVerticalM));
 
             const float ageSpread = clamp01(parcel.ageSeconds / 90.0f);
             parcel.radiusM += (settings_.baseSpreadRateMps +
@@ -446,7 +575,13 @@ ContrailTimelineSample LiveContrailEngine::step(
                                 finite(timeline.meanOpticalDepth) &&
                                 finite(timeline.meanRadiusM) &&
                                 finite(timeline.maximumParcelAgeSeconds) &&
-                                finite(timeline.visibleTrailLengthM);
+                                finite(timeline.visibleTrailLengthM) &&
+                                finite(timeline.meanWakeCirculationM2ps) &&
+                                finite(timeline.meanWakeCoreRadiusM) &&
+                                finite(timeline.meanWakeInducedSpeedMps) &&
+                                finite(timeline.meanWakeDescentMps) &&
+                                finite(timeline.maximumWakeLateralDisplacementM) &&
+                                finite(timeline.maximumWakeVerticalDisplacementM);
     if (!timelineFinite) encounteredNonFinite_ = true;
 
     hashTimelineSample(deterministicHash_, timeline);
@@ -455,7 +590,7 @@ ContrailTimelineSample LiveContrailEngine::step(
                   summary_.emittedParcelCount >= summary_.expiredParcelCount;
     if (!summary_.ok) {
         summary_.error = encounteredNonFinite_
-            ? "Live contrail simulation produced a non-finite value"
+            ? "Wake Fluid v1 produced a non-finite value"
             : "Live contrail parcel accounting failed";
     }
 

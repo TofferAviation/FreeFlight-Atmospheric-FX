@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(FFAtmo VERSION 0.4.0 LANGUAGES CXX)
+project(FFAtmo VERSION 0.5.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -32,6 +32,7 @@ add_library(ffatmo_core STATIC
     src/diagnostics/ReplayRunner.cpp
     src/engine/ContrailSimulation.cpp
     src/engine/LiveContrailEngine.cpp
+    src/engine/WakeFluidSolver.cpp
     src/render/ContrailRenderPlanner.cpp
 )
 target_include_directories(ffatmo_core PUBLIC src)

@@ -10,7 +10,28 @@ namespace ffatmo::render {
 struct BillboardAngles {
     float headingDeg = 0.0f;
     float pitchDeg = 0.0f;
+    float rollDeg = 0.0f;
 };
+
+inline engine::Vec3d normalizedVector(const engine::Vec3d& value,
+                                      const engine::Vec3d& fallback) {
+    const double magnitude = std::sqrt(
+        value.x * value.x + value.y * value.y + value.z * value.z);
+    if (!std::isfinite(magnitude) || magnitude <= 1.0e-9) return fallback;
+    return {value.x / magnitude, value.y / magnitude, value.z / magnitude};
+}
+
+inline double dotVector(const engine::Vec3d& a, const engine::Vec3d& b) {
+    return a.x * b.x + a.y * b.y + a.z * b.z;
+}
+
+inline engine::Vec3d crossVector(const engine::Vec3d& a, const engine::Vec3d& b) {
+    return {
+        a.y * b.z - a.z * b.y,
+        a.z * b.x - a.x * b.z,
+        a.x * b.y - a.y * b.x
+    };
+}
 
 inline BillboardAngles calculateBillboardAngles(const engine::Vec3d& objectPosition,
                                                  const engine::Vec3d& cameraPosition) {
@@ -24,6 +45,43 @@ inline BillboardAngles calculateBillboardAngles(const engine::Vec3d& objectPosit
     result.headingDeg = static_cast<float>(std::atan2(deltaX, -deltaZ) * radiansToDegrees);
     result.pitchDeg = static_cast<float>(
         std::atan2(deltaY, std::max(horizontal, 1.0e-9)) * radiansToDegrees);
+    return result;
+}
+
+inline BillboardAngles calculateTrailBillboardAngles(
+    const engine::Vec3d& objectPosition,
+    const engine::Vec3d& cameraPosition,
+    const engine::Vec3d& trailTangentLocal) {
+    constexpr double degreesToRadians = 0.017453292519943295769;
+    constexpr double radiansToDegrees = 57.2957795130823208768;
+
+    BillboardAngles result = calculateBillboardAngles(objectPosition, cameraPosition);
+    const double heading = static_cast<double>(result.headingDeg) * degreesToRadians;
+    const double pitch = static_cast<double>(result.pitchDeg) * degreesToRadians;
+
+    const engine::Vec3d normal {
+        std::sin(heading) * std::cos(pitch),
+        std::sin(pitch),
+        -std::cos(heading) * std::cos(pitch)
+    };
+    const engine::Vec3d referenceUp {
+        -std::sin(heading) * std::sin(pitch),
+        std::cos(pitch),
+        std::cos(heading) * std::sin(pitch)
+    };
+    const engine::Vec3d referenceRight = normalizedVector(
+        crossVector(normal, referenceUp), {1.0, 0.0, 0.0});
+
+    const double tangentNormalComponent = dotVector(trailTangentLocal, normal);
+    const engine::Vec3d projectedTangent {
+        trailTangentLocal.x - normal.x * tangentNormalComponent,
+        trailTangentLocal.y - normal.y * tangentNormalComponent,
+        trailTangentLocal.z - normal.z * tangentNormalComponent
+    };
+    const engine::Vec3d alignedTangent = normalizedVector(projectedTangent, referenceUp);
+    const double rightComponent = dotVector(alignedTangent, referenceRight);
+    const double upComponent = dotVector(alignedTangent, referenceUp);
+    result.rollDeg = static_cast<float>(std::atan2(rightComponent, upComponent) * radiansToDegrees);
     return result;
 }
 
@@ -41,23 +99,52 @@ inline double billboardAlignmentErrorDegrees(const engine::Vec3d& objectPosition
         -std::cos(heading) * std::cos(pitch)
     };
 
-    engine::Vec3d target {
+    const engine::Vec3d target = normalizedVector({
         cameraPosition.x - objectPosition.x,
         cameraPosition.y - objectPosition.y,
         cameraPosition.z - objectPosition.z
-    };
-    const double targetLength = std::sqrt(
-        target.x * target.x + target.y * target.y + target.z * target.z);
-    if (targetLength <= 1.0e-9) return 0.0;
-    target.x /= targetLength;
-    target.y /= targetLength;
-    target.z /= targetLength;
+    }, normal);
+    const double alignment = std::clamp(dotVector(normal, target), -1.0, 1.0);
+    return std::acos(alignment) * radiansToDegrees;
+}
 
-    const double dot = std::clamp(
-        normal.x * target.x + normal.y * target.y + normal.z * target.z,
-        -1.0,
-        1.0);
-    return std::acos(dot) * radiansToDegrees;
+inline double trailAlignmentErrorDegrees(const engine::Vec3d& objectPosition,
+                                         const engine::Vec3d& cameraPosition,
+                                         const engine::Vec3d& trailTangentLocal,
+                                         const BillboardAngles& angles) {
+    constexpr double degreesToRadians = 0.017453292519943295769;
+    constexpr double radiansToDegrees = 57.2957795130823208768;
+
+    const double heading = static_cast<double>(angles.headingDeg) * degreesToRadians;
+    const double pitch = static_cast<double>(angles.pitchDeg) * degreesToRadians;
+    const double roll = static_cast<double>(angles.rollDeg) * degreesToRadians;
+    const engine::Vec3d normal {
+        std::sin(heading) * std::cos(pitch),
+        std::sin(pitch),
+        -std::cos(heading) * std::cos(pitch)
+    };
+    const engine::Vec3d referenceUp {
+        -std::sin(heading) * std::sin(pitch),
+        std::cos(pitch),
+        std::cos(heading) * std::sin(pitch)
+    };
+    const engine::Vec3d referenceRight = normalizedVector(
+        crossVector(normal, referenceUp), {1.0, 0.0, 0.0});
+    const engine::Vec3d renderedLongAxis {
+        referenceUp.x * std::cos(roll) + referenceRight.x * std::sin(roll),
+        referenceUp.y * std::cos(roll) + referenceRight.y * std::sin(roll),
+        referenceUp.z * std::cos(roll) + referenceRight.z * std::sin(roll)
+    };
+
+    const double tangentNormalComponent = dotVector(trailTangentLocal, normal);
+    const engine::Vec3d projectedTangent = normalizedVector({
+        trailTangentLocal.x - normal.x * tangentNormalComponent,
+        trailTangentLocal.y - normal.y * tangentNormalComponent,
+        trailTangentLocal.z - normal.z * tangentNormalComponent
+    }, renderedLongAxis);
+    const double alignment = std::clamp(
+        std::abs(dotVector(renderedLongAxis, projectedTangent)), -1.0, 1.0);
+    return std::acos(alignment) * radiansToDegrees;
 }
 
 }  // namespace ffatmo::render

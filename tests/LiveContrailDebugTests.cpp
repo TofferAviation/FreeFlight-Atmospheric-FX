@@ -1,6 +1,7 @@
 #include "diagnostics/LiveSnapshotNormalizer.h"
 #include "engine/ContrailSimulation.h"
 #include "engine/LiveContrailEngine.h"
+#include "engine/WakeFluidSolver.h"
 
 #include <cmath>
 #include <cstdlib>
@@ -44,14 +45,22 @@ Fixture makeDryFixture(std::size_t sampleCount) {
         };
         snapshot.headingDegTrue = 90.0f;
         snapshot.trueAirspeedMps = 220.0f;
+        snapshot.normalLoadFactorG = 1.0f;
+        snapshot.totalMassKg = 65000.0f;
         snapshot.atmosphere.temperatureK = 234.0f;
         snapshot.atmosphere.staticPressurePa = 30000.0f;
+        snapshot.atmosphere.densityKgM3 = 0.45f;
+        snapshot.atmosphere.gravityMps2 = 9.80665f;
         snapshot.atmosphere.windLocalMps = {8.0f, 0.0f, -2.0f};
         snapshot.atmosphere.profile.windLevelCount = 2;
         snapshot.atmosphere.profile.windAltitudeMslM[0] = 0.0f;
         snapshot.atmosphere.profile.windAltitudeMslM[1] = 12000.0f;
         snapshot.atmosphere.profile.turbulenceScale[0] = 0.02f;
         snapshot.atmosphere.profile.turbulenceScale[1] = 0.08f;
+        snapshot.atmosphere.profile.shearSpeedMps[0] = 0.5f;
+        snapshot.atmosphere.profile.shearSpeedMps[1] = 3.0f;
+        snapshot.atmosphere.profile.shearDirectionDegTrue[0] = 180.0f;
+        snapshot.atmosphere.profile.shearDirectionDegTrue[1] = 220.0f;
         snapshot.engineCount = 2;
         for (std::uint32_t engineIndex = 0; engineIndex < 2; ++engineIndex) {
             snapshot.engines[engineIndex].running = 1;
@@ -137,6 +146,65 @@ int main() {
     require(normalizedPaused.physicsDeltaSeconds == 0.0,
             "pause freezes live physics clock");
 
+    engine::WakeFluidAircraftGeometry aircraft;
+    aircraft.wingspanM = 35.8f;
+    aircraft.referenceMassKg = 65000.0f;
+    engine::WakeFluidEnvironment calmEnvironment;
+    calmEnvironment.aircraftMassKg = 65000.0f;
+    calmEnvironment.trueAirspeedMps = 230.0f;
+    calmEnvironment.airDensityKgM3 = 0.45f;
+    calmEnvironment.gravityMps2 = 9.80665f;
+    calmEnvironment.normalLoadFactorG = 1.0f;
+
+    auto leftWake = engine::initializeWakeFluidState(
+        aircraft, calmEnvironment, {1.0, 0.0, 0.0}, {0.0, 1.0, 0.0}, -5.0f, -1.5f);
+    auto rightWake = engine::initializeWakeFluidState(
+        aircraft, calmEnvironment, {1.0, 0.0, 0.0}, {0.0, 1.0, 0.0}, 5.0f, -1.5f);
+    require(leftWake.initialized && rightWake.initialized,
+            "B738-like wake states initialize");
+    require(leftWake.initialCirculationM2ps > 150.0f &&
+                leftWake.initialCirculationM2ps < 350.0f,
+            "lifting-line circulation stays in the expected B738 engineering range");
+    require(leftWake.vortexSeparationM > 27.0f && leftWake.vortexSeparationM < 29.0f,
+            "effective vortex separation uses pi-over-four wingspan");
+
+    engine::WakeFluidStepResult leftStep;
+    engine::WakeFluidStepResult rightStep;
+    for (int step = 1; step <= 600; ++step) {
+        const float age = static_cast<float>(step) * 0.05f;
+        leftStep = engine::advanceWakeFluidState(
+            leftWake, 77, age, 0.05f, calmEnvironment);
+        rightStep = engine::advanceWakeFluidState(
+            rightWake, 77, age, 0.05f, calmEnvironment);
+        require(leftStep.finite && rightStep.finite,
+                "finite-core integration remains finite");
+    }
+    require(leftWake.circulationM2ps < leftWake.initialCirculationM2ps,
+            "wake circulation decays with age");
+    require(leftWake.coreRadiusM > leftWake.initialCoreRadiusM,
+            "vortex core grows through eddy diffusion");
+    require(leftWake.wakeCentreVerticalM < -10.0f,
+            "counter-rotating pair descends over thirty seconds");
+    require(std::abs(leftWake.lateralM + rightWake.lateralM) < 0.15f,
+            "calm left and right wake trajectories remain mirror symmetric");
+    require(std::abs(leftWake.verticalM - rightWake.verticalM) < 0.15f,
+            "calm left and right wake trajectories share vertical motion");
+    require(leftStep.inducedSpeedMps <= 8.0f + 1.0e-4f,
+            "finite-core velocity stays inside the safety clamp");
+
+    engine::WakeFluidSettings disabledSettings;
+    disabledSettings.enabled = false;
+    const auto disabledWake = engine::initializeWakeFluidState(
+        aircraft,
+        calmEnvironment,
+        {1.0, 0.0, 0.0},
+        {0.0, 1.0, 0.0},
+        -5.0f,
+        -1.5f,
+        disabledSettings);
+    require(!disabledWake.initialized,
+            "wake solver can be disabled without generating state");
+
     const Fixture fixture = makeDryFixture(1800);
     const auto offline = engine::simulateContrails(fixture.replay, fixture.normalized);
     engine::LiveContrailEngine live;
@@ -147,6 +215,8 @@ int main() {
     };
     live.setEngineExhaustBodyOffsets(exhaustOffsets);
     liveRepeat.setEngineExhaustBodyOffsets(exhaustOffsets);
+    live.setWakeAircraftGeometry(35.8f, 65000.0f);
+    liveRepeat.setWakeAircraftGeometry(35.8f, 65000.0f);
     for (std::size_t index = 0; index < fixture.replay.snapshots.size(); ++index) {
         live.step(fixture.replay.snapshots[index], fixture.normalized.samples[index]);
         liveRepeat.step(fixture.replay.snapshots[index], fixture.normalized.samples[index]);
@@ -163,14 +233,25 @@ int main() {
             "repeated live wake simulation produces the same deterministic hash");
     require(live.parcels().size() == liveRepeat.parcels().size(),
             "repeated live simulations finish with the same parcel count");
+    require(live.summary().wakeFluidStepCount > 0,
+            "live engine executes Wake Fluid v1 parcel steps");
+    require(live.summary().maximumWakeInitialCirculationM2ps > 150.0f,
+            "live diagnostics record aircraft-state circulation");
+    require(live.summary().maximumWakeInducedSpeedMps > 0.05f,
+            "live diagnostics record finite-core induced velocity");
+    require(live.summary().maximumWakeDescentMps > 0.20f,
+            "live diagnostics record wake-pair descent");
+    require(live.summary().maximumWakeCoreRadiusM > 0.50f,
+            "live diagnostics record growing vortex cores");
 
     engine::LiveContrailEngine geometryEngine;
     geometryEngine.setEngineExhaustBodyOffsets(exhaustOffsets);
+    geometryEngine.setWakeAircraftGeometry(35.8f, 65000.0f);
     for (std::size_t index = 0; index < 240; ++index) {
         geometryEngine.step(fixture.replay.snapshots[index], fixture.normalized.samples[index]);
     }
     require(geometryEngine.summary().ok,
-            "parsed exhaust offsets are accepted by the live engine");
+            "parsed exhaust and wing geometry are accepted by the live engine");
     bool observedRollup = false;
     for (const auto& parcel : geometryEngine.parcels()) {
         if (std::abs(parcel.vortexSide) > 0.5f &&
@@ -181,8 +262,8 @@ int main() {
         }
     }
     require(observedRollup,
-            "live parcels receive deterministic inward wake-roll-up displacement");
+            "live parcels receive finite-core vortex displacement");
 
-    std::cout << "FFAtmo live contrail world-renderer tests passed\n";
+    std::cout << "FFAtmo Wake Fluid Simulation v1 tests passed\n";
     return 0;
 }

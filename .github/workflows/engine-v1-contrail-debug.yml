@@ -118,6 +118,28 @@ jobs:
           if (-not (Test-Path $plugin)) { throw "Renderer Foundation v4.3 win.xpl was not produced" }
           if ((Get-Item $plugin).Length -lt 100000) { throw "Renderer Foundation v4.3 win.xpl is unexpectedly small" }
 
+          # v4.3 changes only planner/material files. Patch equal-length debug labels in
+          # the packaged binary so the overlay, report heading and log identify this build.
+          $bytes = [System.IO.File]::ReadAllBytes($plugin)
+          $old = [System.Text.Encoding]::ASCII.GetBytes("v4.2")
+          $new = [System.Text.Encoding]::ASCII.GetBytes("v4.3")
+          $replacements = 0
+          for ($index = 0; $index -le $bytes.Length - $old.Length; $index++) {
+            $match = $true
+            for ($offset = 0; $offset -lt $old.Length; $offset++) {
+              if ($bytes[$index + $offset] -ne $old[$offset]) { $match = $false; break }
+            }
+            if (-not $match) { continue }
+            for ($offset = 0; $offset -lt $new.Length; $offset++) {
+              $bytes[$index + $offset] = $new[$offset]
+            }
+            $replacements++
+            $index += $old.Length - 1
+          }
+          if ($replacements -lt 1) { throw "Could not locate packaged v4.2 debug labels" }
+          [System.IO.File]::WriteAllBytes($plugin, $bytes)
+          "patched_debug_version_labels=$replacements" | Add-Content build-logs/build.txt
+
       - name: Generate and validate Renderer Foundation v4.3 assets
         shell: pwsh
         run: |

@@ -56,7 +56,13 @@ struct ContrailRenderPlannerSettings {
     float minimumOpacityStrength = 0.0008f;
     float heatHandoffStartSeconds = 0.02f;
     float heatHandoffFullSeconds = 0.80f;
-    float maximumCoreAgeSeconds = 22.0f;
+
+    // Renderer Foundation v4.3 keeps the dense centre short-lived and faint.
+    float maximumCoreAgeSeconds = 12.0f;
+    float coreOpacityScale = 0.32f;
+    std::uint8_t maximumCoreOpacityBucket = 1;
+    float maximumCoreShare = 0.30f;
+
     double maximumSelectedSpacingM = 45.0;
     std::array<std::size_t, kContrailRenderAssetCount> assetCapacities {
         192, 192, 192, 192, 192, 192, 192, 192
@@ -78,6 +84,7 @@ struct ContrailRenderPlannerStatistics {
     std::size_t capacityRejectedCount = 0;
     std::size_t assetCapacityRejectedCount = 0;
     std::size_t assetBucketRemapCount = 0;
+    std::size_t coreBucketClampCount = 0;
     std::size_t continuityTrimmedCount = 0;
     std::array<std::size_t, kContrailOpacityBucketCount> generatedByBucket {};
     std::array<std::size_t, kContrailRenderAssetCount> selectedByAsset {};

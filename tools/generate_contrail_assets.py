@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate deterministic Renderer Foundation v4.2 OBJ8 trail assets."""
+"""Generate deterministic Renderer Foundation v4.3 neutral-white trail assets."""
 
 from __future__ import annotations
 
@@ -17,6 +17,7 @@ BORDER_FRACTION = 0.08
 ALPHA_LEVELS = (0.018, 0.032, 0.055, 0.085)
 VARIANTS = ("a", "b")
 LUMINANCE_NITS = 250
+EMISSION_RGB = "1.0 1.0 1.0"
 
 
 def png_chunk(kind: bytes, payload: bytes) -> bytes:
@@ -193,6 +194,7 @@ def make_obj(path: Path, texture_name: str) -> None:
             "ATTR_no_cull",
             "ATTR_blend",
             "ATTR_no_shadow",
+            f"ATTR_emission_rgb {EMISSION_RGB}",
             f"TRIS 0 {len(indices)}",
             "ANIM_end",
             "ANIM_end",
@@ -220,7 +222,9 @@ def validate_obj(path: Path, texture_name: str) -> None:
     if f"TEXTURE_LIT {texture_name}" not in lines:
         raise RuntimeError(f"{path.name}: expected neutral lit texture reference is missing")
     if f"GLOBAL_luminance {LUMINANCE_NITS}" not in lines:
-        raise RuntimeError(f"{path.name}: expected v4.2 luminance directive is missing")
+        raise RuntimeError(f"{path.name}: expected v4.3 luminance directive is missing")
+    if f"ATTR_emission_rgb {EMISSION_RGB}" not in lines:
+        raise RuntimeError(f"{path.name}: expected v4.3 neutral emission override is missing")
     if "ATTR_no_cull" not in lines or "ATTR_blend" not in lines or "ATTR_no_shadow" not in lines:
         raise RuntimeError(f"{path.name}: required transparency attributes are missing")
     if not any("ffatmo/contrail_debug/width" in line for line in lines):
@@ -243,7 +247,7 @@ def main() -> int:
             object_name = f"{stem}.obj"
             texture_path = args.output / texture_name
             object_path = args.output / object_name
-            pixels = make_texture(maximum_alpha, 14200 + bucket * 19 + variant_index * 107)
+            pixels = make_texture(maximum_alpha, 14300 + bucket * 19 + variant_index * 107)
             validate_pixels(texture_name, pixels, maximum_alpha)
             write_png(texture_path, WIDTH, HEIGHT, pixels)
             make_obj(object_path, texture_name)
@@ -251,8 +255,8 @@ def main() -> int:
             generated.extend((texture_name, object_name))
 
     (args.output / "ASSET_INFO.txt").write_text(
-        "FFAtmo Renderer Foundation v4.2 deterministic asset set.\n"
-        "Lower-alpha narrow segments reduce interaction with aircraft exhaust heat haze.\n"
+        "FFAtmo Renderer Foundation v4.3 deterministic asset set.\n"
+        "Neutral RGB textures plus an explicit white emission override prevent shaded black cores.\n"
         f"Neutral daytime luminance: {LUMINANCE_NITS} nits.\n"
         "Eight assets: four optical buckets and two deterministic variants.\n"
         + "\n".join(generated)

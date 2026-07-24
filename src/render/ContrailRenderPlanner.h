@@ -14,9 +14,12 @@ inline constexpr std::size_t kContrailTextureVariantCount = 2;
 inline constexpr std::size_t kContrailRenderAssetCount =
     kContrailOpacityBucketCount * kContrailTextureVariantCount;
 
+// v4.4 renders one composite section. Halo remains as an alias so existing
+// diagnostics continue to describe the single soft outer/composite layer.
 enum class ContrailRenderLayer : std::uint8_t {
     Core = 0,
-    Halo = 1
+    Halo = 1,
+    Composite = Halo
 };
 
 struct ContrailRenderInput {
@@ -43,7 +46,7 @@ struct ContrailRenderSample {
     float priority = 0.0f;
     std::uint8_t opacityBucket = 0;
     std::uint8_t textureVariant = 0;
-    ContrailRenderLayer layer = ContrailRenderLayer::Core;
+    ContrailRenderLayer layer = ContrailRenderLayer::Composite;
     bool nearField = false;
 };
 
@@ -57,7 +60,8 @@ struct ContrailRenderPlannerSettings {
     float heatHandoffStartSeconds = 0.02f;
     float heatHandoffFullSeconds = 0.80f;
 
-    // Renderer Foundation v4.3 keeps the dense centre short-lived and faint.
+    // Retained for source compatibility with v4.3 callers. The v4.4 planner
+    // never creates a separate core layer and ignores these values.
     float maximumCoreAgeSeconds = 12.0f;
     float coreOpacityScale = 0.32f;
     std::uint8_t maximumCoreOpacityBucket = 1;
@@ -74,10 +78,14 @@ struct ContrailRenderPlannerStatistics {
     std::size_t validParcelCount = 0;
     std::size_t generatedSampleCount = 0;
     std::size_t selectedSampleCount = 0;
+
+    // Core stays zero in v4.4. Halo is the legacy diagnostic name for the
+    // single composite layer so existing reports remain readable.
     std::size_t generatedCoreCount = 0;
     std::size_t generatedHaloCount = 0;
     std::size_t selectedCoreCount = 0;
     std::size_t selectedHaloCount = 0;
+
     std::size_t generatedNearFieldCount = 0;
     std::size_t selectedNearFieldCount = 0;
     std::size_t streamBreakCount = 0;

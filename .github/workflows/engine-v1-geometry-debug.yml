@@ -1,0 +1,175 @@
+name: Build Engine v1 Geometry Debug
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - engine/v1
+    paths:
+      - "CMakeLists.txt"
+      - "src/acf/**"
+      - "src/diagnostics/**"
+      - "src/engine/**"
+      - "src/render/**"
+      - "src/GeometryDebugPlugin.cpp"
+      - "src/GeometryDebugOverlay.*"
+      - "tests/AcfParserTests.cpp"
+      - "tests/ReplayTests.cpp"
+      - "tests/ReplayRunnerTests.cpp"
+      - "tests/ContrailSimulationTests.cpp"
+      - "tests/LiveContrailDebugTests.cpp"
+      - "tests/ContrailRenderPlannerTests.cpp"
+      - ".github/workflows/engine-v1-geometry-debug.yml"
+  pull_request:
+    branches:
+      - engine/v1
+    paths:
+      - "CMakeLists.txt"
+      - "src/acf/**"
+      - "src/diagnostics/**"
+      - "src/engine/**"
+      - "src/render/**"
+      - "src/GeometryDebugPlugin.cpp"
+      - "src/GeometryDebugOverlay.*"
+      - "tests/AcfParserTests.cpp"
+      - "tests/ReplayTests.cpp"
+      - "tests/ReplayRunnerTests.cpp"
+      - "tests/ContrailSimulationTests.cpp"
+      - "tests/LiveContrailDebugTests.cpp"
+      - "tests/ContrailRenderPlannerTests.cpp"
+      - ".github/workflows/engine-v1-geometry-debug.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ffatmo-engine-v1-geometry-debug-${{ github.event.pull_request.number || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out engine/v1
+        uses: actions/checkout@v4
+
+      - name: Fetch X-Plane Plugin SDK 4.3.0
+        id: xplane_sdk
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path third_party | Out-Null
+          $archive = Join-Path $pwd "third_party/XPSDK430.zip"
+          $destination = Join-Path $pwd "third_party/xplane-sdk"
+          $downloaded = $false
+          for ($attempt = 1; $attempt -le 5; $attempt++) {
+            try {
+              if (Test-Path $archive) { Remove-Item $archive -Force }
+              Invoke-WebRequest `
+                -Uri "https://developer.x-plane.com/wp-content/plugins/code-sample-generation/sdk_zip_files/XPSDK430.zip" `
+                -OutFile $archive `
+                -Headers @{ "User-Agent" = "FFAtmo-GitHub-Actions" }
+              if ((Get-Item $archive).Length -lt 1000000) {
+                throw "Downloaded SDK archive is unexpectedly small"
+              }
+              $downloaded = $true
+              break
+            } catch {
+              if ($attempt -eq 5) { throw }
+              Start-Sleep -Seconds (8 * $attempt)
+            }
+          }
+          if (-not $downloaded) { throw "Could not download X-Plane SDK after retries" }
+          Expand-Archive -LiteralPath $archive -DestinationPath $destination -Force
+          $header = Get-ChildItem $destination -Recurse -Filter "XPLMPlugin.h" |
+            Where-Object { $_.FullName.Replace('\', '/') -like '*/CHeaders/XPLM/XPLMPlugin.h' } |
+            Select-Object -First 1
+          if (-not $header) { throw "The X-Plane SDK archive did not contain XPLMPlugin.h" }
+          $sdkRoot = Split-Path (Split-Path (Split-Path $header.FullName -Parent) -Parent) -Parent
+          if (-not (Test-Path (Join-Path $sdkRoot "Libraries/Win/XPLM_64.lib"))) {
+            throw "The X-Plane SDK Windows link library was not found"
+          }
+          "path=$sdkRoot" >> $env:GITHUB_OUTPUT
+
+      - name: Configure geometry-debug build
+        shell: pwsh
+        run: >-
+          cmake -S . -B build-geometry-debug -A x64
+          -DXPLANE_SDK="${{ steps.xplane_sdk.outputs.path }}"
+          -DFFATMO_BUILD_PLUGIN=OFF
+          -DFFATMO_BUILD_COMPANION=OFF
+          -DFFATMO_BUILD_IMGUI_PANEL=OFF
+          -DFFATMO_BUILD_TESTS=ON
+          -DFFATMO_BUILD_GEOMETRY_DEBUG=ON
+
+      - name: Build parser, tests, and plugin
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path build-logs | Out-Null
+          & cmake --build build-geometry-debug --config Release --target FFAtmoEngineDebug ffatmo_core_tests ffatmo_acf_tests ffatmo_replay_tests ffatmo_replay_runner_tests ffatmo_contrail_tests ffatmo_live_contrail_debug_tests ffatmo_contrail_render_planner_tests *> build-logs/build.txt
+          $buildExit = $LASTEXITCODE
+          if ($buildExit -ne 0) {
+            Write-Host "Build failed; diagnostics are being uploaded."
+            exit $buildExit
+          }
+          & ctest --test-dir build-geometry-debug -C Release --output-on-failure *> build-logs/tests.txt
+          $testExit = $LASTEXITCODE
+          if ($testExit -ne 0) {
+            Write-Host "Tests failed; diagnostics are being uploaded."
+            exit $testExit
+          }
+          $plugin = "package/FFAtmoEngineDebug/64/win.xpl"
+          if (-not (Test-Path $plugin)) { throw "Geometry-debug win.xpl was not produced" }
+          if ((Get-Item $plugin).Length -lt 50000) { throw "Geometry-debug win.xpl is unexpectedly small" }
+
+      - name: Upload build diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: FFAtmoEngineDebug-build-diagnostics
+          path: build-logs
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Assemble test package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path artifact/FFAtmoEngineDebug/64 | Out-Null
+          Copy-Item package/FFAtmoEngineDebug/64/win.xpl artifact/FFAtmoEngineDebug/64/win.xpl -Force
+          @'
+          FFAtmo Engine Geometry Debug
+
+          INSTALL
+          Copy the FFAtmoEngineDebug folder into:
+          X-Plane 12/Resources/plugins/
+
+          It installs separately from the normal FFAtmo plugin.
+
+          TEST
+          1. Start X-Plane and load the Boeing 737-800NG.
+          2. Open Plugins > FFAtmo Engine Geometry Debug.
+          3. Leave Geometry Overlay enabled.
+          4. Check the aircraft from front, rear, left side, top, and rear-oblique views.
+          5. Use Export Validation Report.
+
+          COLOURS
+          Red/green/blue axes: aircraft datum
+          Yellow crosses: engine centres
+          Orange crosses: exhaust origins
+          Cyan lines: exhaust directions
+          Magenta lines: parsed main-wing chain
+          Green crosses: derived wingtips
+
+          SEND BACK
+          - five screenshots
+          - X-Plane 12/Log.txt
+          - FFAtmoEngineDebug/reports/geometry_validation.txt
+          '@ | Set-Content artifact/FFAtmoEngineDebug/README_TESTING.txt -Encoding utf8
+
+      - name: Upload geometry-debug plugin
+        uses: actions/upload-artifact@v4
+        with:
+          name: FFAtmoEngineDebug-win64
+          path: artifact/FFAtmoEngineDebug
+          if-no-files-found: error
+          retention-days: 14

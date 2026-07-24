@@ -1,0 +1,141 @@
+name: Build Engine v1 Offline Replay Runner
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - engine/v1
+    paths:
+      - "CMakeLists.txt"
+      - "src/diagnostics/ReplayFile.*"
+      - "src/diagnostics/ReplayRunner.*"
+      - "src/diagnostics/LiveSnapshotNormalizer.*"
+      - "src/engine/SimulatorSnapshot.h"
+      - "src/engine/ContrailSimulation.*"
+      - "src/engine/LiveContrailEngine.*"
+      - "src/render/**"
+      - "src/tools/ReplayRunnerMain.cpp"
+      - "tests/ReplayTests.cpp"
+      - "tests/ReplayRunnerTests.cpp"
+      - "tests/ContrailSimulationTests.cpp"
+      - "tests/LiveContrailDebugTests.cpp"
+      - "tests/ContrailRenderPlannerTests.cpp"
+      - ".github/workflows/engine-v1-replay-runner.yml"
+  pull_request:
+    branches:
+      - engine/v1
+    paths:
+      - "CMakeLists.txt"
+      - "src/diagnostics/ReplayFile.*"
+      - "src/diagnostics/ReplayRunner.*"
+      - "src/diagnostics/LiveSnapshotNormalizer.*"
+      - "src/engine/SimulatorSnapshot.h"
+      - "src/engine/ContrailSimulation.*"
+      - "src/engine/LiveContrailEngine.*"
+      - "src/render/**"
+      - "src/tools/ReplayRunnerMain.cpp"
+      - "tests/ReplayTests.cpp"
+      - "tests/ReplayRunnerTests.cpp"
+      - "tests/ContrailSimulationTests.cpp"
+      - "tests/LiveContrailDebugTests.cpp"
+      - "tests/ContrailRenderPlannerTests.cpp"
+      - ".github/workflows/engine-v1-replay-runner.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ffatmo-engine-v1-replay-runner-${{ github.event.pull_request.number || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out replay-runner source
+        uses: actions/checkout@v4
+
+      - name: Configure replay-runner build
+        shell: pwsh
+        run: >-
+          cmake -S . -B build-replay-runner -A x64
+          -DFFATMO_BUILD_PLUGIN=OFF
+          -DFFATMO_BUILD_COMPANION=OFF
+          -DFFATMO_BUILD_IMGUI_PANEL=OFF
+          -DFFATMO_BUILD_GEOMETRY_DEBUG=OFF
+          -DFFATMO_BUILD_RECORDER_DEBUG=OFF
+          -DFFATMO_BUILD_CONTRAIL_DEBUG=OFF
+          -DFFATMO_BUILD_REPLAY_RUNNER=ON
+          -DFFATMO_BUILD_TESTS=ON
+
+      - name: Build runner and tests
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path build-logs | Out-Null
+          & cmake --build build-replay-runner --config Release --target FFAtmoReplayRunner ffatmo_core_tests ffatmo_acf_tests ffatmo_replay_tests ffatmo_replay_runner_tests ffatmo_contrail_tests ffatmo_live_contrail_debug_tests ffatmo_contrail_render_planner_tests *> build-logs/build.txt
+          $buildExit = $LASTEXITCODE
+          if ($buildExit -ne 0) { exit $buildExit }
+          & ctest --test-dir build-replay-runner -C Release --output-on-failure *> build-logs/tests.txt
+          $testExit = $LASTEXITCODE
+          if ($testExit -ne 0) { exit $testExit }
+          $runner = "package/FFAtmoReplayRunner/FFAtmoReplayRunner.exe"
+          if (-not (Test-Path $runner)) { throw "FFAtmoReplayRunner.exe was not produced" }
+          if ((Get-Item $runner).Length -lt 50000) { throw "FFAtmoReplayRunner.exe is unexpectedly small" }
+
+      - name: Upload build diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: FFAtmoReplayRunner-build-diagnostics
+          path: build-logs
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Assemble replay-runner package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path artifact/FFAtmoReplayRunner | Out-Null
+          Copy-Item package/FFAtmoReplayRunner/FFAtmoReplayRunner.exe artifact/FFAtmoReplayRunner/FFAtmoReplayRunner.exe -Force
+          @'
+          FFAtmo Atmospheric Engine v1 Offline Replay Runner v2
+
+          PURPOSE
+          This is an engineering tool, not an X-Plane plugin. It validates a .ffar
+          recording, creates normalized aircraft/environment samples, freezes physics
+          during pause and X-Plane replay, detects local-coordinate origin shifts, and
+          runs the first deterministic contrail formation and dry-air decay simulation.
+
+          QUICK USE
+          1. Put FFAtmoReplayRunner.exe and a .ffar recording in any normal folder.
+          2. Open Command Prompt in that folder.
+          3. Run:
+             FFAtmoReplayRunner.exe 20260722-151222-B738.ffar
+
+          OUTPUT
+          A FFAtmoReplayOutput folder will be created beside the recording containing:
+          - <recording>-runner-summary.txt
+          - <recording>-normalized.csv
+          - <recording>-contrail-summary.txt
+          - <recording>-contrail-timeline.csv
+
+          The contrail model uses normalized visual ice-mass units. It is the first
+          deterministic engineering baseline, not a completed calibrated microphysics
+          model and not yet connected to X-Plane rendering.
+
+          OPTIONS
+          --output <directory>   Choose another output folder.
+          --no-csv               Write only the two text summaries.
+          --help                 Show usage.
+
+          This executable does not need to be installed in X-Plane.
+          '@ | Set-Content artifact/FFAtmoReplayRunner/README.txt -Encoding utf8
+          "git_revision=${{ github.sha }}" | Set-Content artifact/FFAtmoReplayRunner/BUILD_INFO.txt -Encoding utf8
+
+      - name: Upload offline replay runner
+        uses: actions/upload-artifact@v4
+        with:
+          name: FFAtmoReplayRunner-win64
+          path: artifact/FFAtmoReplayRunner
+          if-no-files-found: error
+          retention-days: 14

@@ -10,6 +10,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: ffatmo-release-${{ github.ref_name }}
+  cancel-in-progress: true
+
 jobs:
   release:
     runs-on: windows-latest
@@ -29,11 +33,14 @@ jobs:
           } else {
             $version = $refName.TrimStart('v')
           }
+          if ($version -notmatch '^\d+\.\d+\.\d+$') {
+            throw "Unsupported release version '$version' from ref '$refName'."
+          }
           "version=$version" >> $env:GITHUB_OUTPUT
           "tag=v$version" >> $env:GITHUB_OUTPUT
           "archive=FFAtmo-v$version-win64.zip" >> $env:GITHUB_OUTPUT
 
-      - name: Apply contrail realism calibration
+      - name: Apply narrow-core wake-solver calibration
         shell: pwsh
         run: ./tools/ApplyContrailRealism.ps1
 
@@ -41,17 +48,72 @@ jobs:
         shell: pwsh
         run: ./tools/ApplyLoginV2.ps1
 
+      - name: Apply login background and GitHub icon hotfix
+        shell: pwsh
+        run: ./tools/ApplyLoginHotfix.ps1
+
+      - name: Apply independent effect testing controls
+        shell: pwsh
+        run: ./tools/ApplyEffectIsolationV1.ps1
+
+      - name: Apply X-Plane FX asset synchronization
+        shell: pwsh
+        run: ./tools/ApplyXPlaneAssetSyncV1.ps1
+
+      - name: Validate release patches
+        shell: pwsh
+        run: |
+          $source = Get-Content "app/ImGuiCompanion.cpp" -Raw
+          if (-not $source.Contains('CONTRAILS ONLY')) { throw "Solo effect controls were not applied" }
+          if (-not $source.Contains('bool contrails=gSettings.contrailIntensity>.01f')) { throw "Overview contrail switch is still tied to the master switch" }
+          if (-not $source.Contains('bool syncFxPackageToXPlane()')) { throw "X-Plane FX synchronization was not applied" }
+          if (-not $source.Contains('FFAtmo.asset-version.txt')) { throw "FX deployment marker was not added" }
+
+          $solver = Get-Content "src/ParticleInstance.cpp" -Raw
+          if (-not $solver.Contains('kWakeNodeCount = 28')) { throw "Age-based wake node pool is missing" }
+          if (-not $solver.Contains('leftDesiredX')) { throw "Left vortex path is missing" }
+          if (-not $solver.Contains('rightDesiredX')) { throw "Right vortex path is missing" }
+          if (-not $solver.Contains('liveValues[PublishedDatarefs::PrimaryWake] = 0.0f')) { throw "Legacy live circular wake was not disabled" }
+
+          $particles = Get-Content "package/FFAtmo/assets/FFAtmo_particles.pss" -Raw
+          if (-not $particles.Contains("`t1.000000`t260.000000`t320.000000")) { throw "Narrow engine-core rate was not applied" }
+          if (-not $particles.Contains("`t1.000000`t0.550000`t0.800000")) { throw "Narrow engine-core size multiplier was not applied" }
+          if (-not $particles.Contains("`t1.000000`t12.000000`t18.000000")) { throw "Wake parcel density was not applied" }
+          if (-not $particles.Contains("`t1.000000`t0.200000")) { throw "Compact vortex particle size was not applied" }
+          if (-not $particles.Contains("MAX_PARTICLES 12000")) { throw "Core particle budget was not applied" }
+
       - name: Fetch Dear ImGui
         shell: pwsh
         run: git clone --depth 1 https://github.com/ocornut/imgui.git third_party/imgui
+
+      - name: Fetch X-Plane Plugin SDK
+        id: xplane_sdk
+        shell: pwsh
+        run: |
+          $archive = Join-Path $pwd "third_party/XPSDK430.zip"
+          $destination = Join-Path $pwd "third_party/xplane-sdk"
+          Invoke-WebRequest `
+            -Uri "https://developer.x-plane.com/wp-content/plugins/code-sample-generation/sdk_zip_files/XPSDK430.zip" `
+            -OutFile $archive
+          Expand-Archive -LiteralPath $archive -DestinationPath $destination -Force
+          $header = Get-ChildItem $destination -Recurse -Filter "XPLMPlugin.h" |
+            Where-Object { $_.FullName -match '[\\/]CHeaders[\\/]XPLM[\\/]XPLMPlugin\.h$' } |
+            Select-Object -First 1
+          if (-not $header) { throw "The X-Plane SDK archive did not contain XPLMPlugin.h" }
+          $sdkRoot = Split-Path (Split-Path (Split-Path $header.FullName -Parent) -Parent) -Parent
+          if (-not (Test-Path (Join-Path $sdkRoot "Libraries/Win/XPLM_64.lib"))) {
+            throw "The X-Plane SDK Windows link library was not found"
+          }
+          "path=$sdkRoot" >> $env:GITHUB_OUTPUT
 
       - name: Configure Windows build
         shell: pwsh
         run: >-
           cmake -S . -B build-release -A x64
           -DIMGUI_DIR="$pwd/third_party/imgui"
+          -DXPLANE_SDK="${{ steps.xplane_sdk.outputs.path }}"
           -DFFATMO_APP_VERSION="${{ steps.version.outputs.version }}"
-          -DFFATMO_BUILD_PLUGIN=OFF
+          -DFFATMO_BUILD_PLUGIN=ON
           -DFFATMO_BUILD_COMPANION=ON
           -DFFATMO_BUILD_TESTS=ON
           -DFFATMO_BUILD_IMGUI_PANEL=OFF
@@ -61,10 +123,15 @@ jobs:
         run: |
           Remove-Item "package/FFAtmo/FFAtmoCompanion.exe" -Force -ErrorAction SilentlyContinue
           Remove-Item "package/FFAtmo/FFAtmoUpdater.exe" -Force -ErrorAction SilentlyContinue
-          cmake --build build-release --config Release --target FFAtmoCompanion FFAtmoUpdater ffatmo_core_tests
+          Remove-Item "package/FFAtmo/64/win.xpl" -Force -ErrorAction SilentlyContinue
+          cmake --build build-release --config Release --target FFAtmo FFAtmoCompanion FFAtmoUpdater ffatmo_core_tests
           ctest --test-dir build-release -C Release --output-on-failure
           if (-not (Test-Path "package/FFAtmo/FFAtmoCompanion.exe")) { throw "Release companion was not written to the package root" }
           if (-not (Test-Path "package/FFAtmo/FFAtmoUpdater.exe")) { throw "Release updater was not written to the package root" }
+          if (-not (Test-Path "package/FFAtmo/64/win.xpl")) { throw "Wake-solver win.xpl was not written to the package" }
+          if ((Get-Item "package/FFAtmo/64/win.xpl").Length -lt 50000) { throw "The packaged win.xpl is unexpectedly small" }
+          if (-not (Test-Path "package/FFAtmo/ui/assets/login/icons/github_mark.png")) { throw "GitHub login icon was not generated" }
+          if (Test-Path "package/FFAtmo/ui/assets/login/icons/github_mark.png.b64") { throw "Temporary GitHub icon payload was not removed" }
 
       - name: Package and checksum
         id: package
@@ -78,15 +145,26 @@ jobs:
           "sha256=$hash" >> $env:GITHUB_OUTPUT
           "size=$size" >> $env:GITHUB_OUTPUT
 
-      - name: Publish GitHub release
+      - name: Publish or replace GitHub release asset
         env:
           GH_TOKEN: ${{ github.token }}
         shell: pwsh
         run: |
-          gh release create "${{ steps.version.outputs.tag }}" "${{ steps.version.outputs.archive }}" `
-            --repo "${{ github.repository }}" `
-            --title "Atmospheric FX ${{ steps.version.outputs.tag }}" `
-            --generate-notes
+          $tag = "${{ steps.version.outputs.tag }}"
+          $archive = "${{ steps.version.outputs.archive }}"
+          if (gh release view $tag --repo "${{ github.repository }}" 2>$null) {
+            gh release upload $tag $archive --repo "${{ github.repository }}" --clobber
+            gh release edit $tag `
+              --repo "${{ github.repository }}" `
+              --title "Atmospheric FX $tag" `
+              --target "${{ github.sha }}"
+          } else {
+            gh release create $tag $archive `
+              --repo "${{ github.repository }}" `
+              --target "${{ github.sha }}" `
+              --title "Atmospheric FX $tag" `
+              --generate-notes
+          }
 
       - name: Publish stable manifest
         shell: pwsh
@@ -103,10 +181,11 @@ jobs:
             size_bytes = [int64]"${{ steps.package.outputs.size }}"
             sha256 = "${{ steps.package.outputs.sha256 }}"
             notes = @(
-              "New asset-driven FreeFlight login page",
-              "Functional email and password fields prepared for the future account service",
-              "Working GitHub device login under the new Login With section",
-              "Denser layered contrails and improved wake-to-cirrus transition"
+              "First age-based left and right wake-vortex path solver",
+              "Young engine contrails stay narrow enough to preserve the gap between both trails",
+              "Historical wake parcels rotate inward and descend instead of creating one oversized particle hook",
+              "The release now compiles and ships a fresh win.xpl rather than only updating companion assets",
+              "Updated plugin and particles sync automatically into the selected X-Plane installation"
             )
           }
           $manifest | ConvertTo-Json -Depth 4 | Set-Content update/latest.json -Encoding utf8

@@ -1,0 +1,247 @@
+name: Build Engine v1 Contrail Visual Debug
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - engine/v1
+    paths:
+      - "CMakeLists.txt"
+      - "src/acf/**"
+      - "src/diagnostics/**"
+      - "src/engine/**"
+      - "src/host/**"
+      - "src/render/**"
+      - "src/ContrailDebugPlugin.cpp"
+      - "src/ContrailDebugOverlay.*"
+      - "src/ContrailWorldRenderer.*"
+      - "tools/generate_contrail_assets.py"
+      - "tests/LiveContrailDebugTests.cpp"
+      - "tests/ContrailRenderPlannerTests.cpp"
+      - ".github/workflows/engine-v1-contrail-debug.yml"
+  pull_request:
+    branches:
+      - engine/v1
+    paths:
+      - "CMakeLists.txt"
+      - "src/acf/**"
+      - "src/diagnostics/**"
+      - "src/engine/**"
+      - "src/host/**"
+      - "src/render/**"
+      - "src/ContrailDebugPlugin.cpp"
+      - "src/ContrailDebugOverlay.*"
+      - "src/ContrailWorldRenderer.*"
+      - "tools/generate_contrail_assets.py"
+      - "tests/LiveContrailDebugTests.cpp"
+      - "tests/ContrailRenderPlannerTests.cpp"
+      - ".github/workflows/engine-v1-contrail-debug.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ffatmo-engine-v1-contrail-debug-${{ github.event.pull_request.number || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out live contrail debug source
+        uses: actions/checkout@v4
+
+      - name: Fetch X-Plane Plugin SDK 4.3.0
+        id: xplane_sdk
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path third_party | Out-Null
+          $archive = Join-Path $pwd "third_party/XPSDK430.zip"
+          $destination = Join-Path $pwd "third_party/xplane-sdk"
+          $downloaded = $false
+          for ($attempt = 1; $attempt -le 5; $attempt++) {
+            try {
+              if (Test-Path $archive) { Remove-Item $archive -Force }
+              Invoke-WebRequest `
+                -Uri "https://developer.x-plane.com/wp-content/plugins/code-sample-generation/sdk_zip_files/XPSDK430.zip" `
+                -OutFile $archive `
+                -Headers @{ "User-Agent" = "FFAtmo-GitHub-Actions" }
+              if ((Get-Item $archive).Length -lt 1000000) {
+                throw "Downloaded SDK archive is unexpectedly small"
+              }
+              $downloaded = $true
+              break
+            } catch {
+              if ($attempt -eq 5) { throw }
+              Start-Sleep -Seconds (8 * $attempt)
+            }
+          }
+          if (-not $downloaded) { throw "Could not download X-Plane SDK after retries" }
+          Expand-Archive -LiteralPath $archive -DestinationPath $destination -Force
+          $header = Get-ChildItem $destination -Recurse -Filter "XPLMPlugin.h" |
+            Where-Object { $_.FullName.Replace('\', '/') -like '*/CHeaders/XPLM/XPLMPlugin.h' } |
+            Select-Object -First 1
+          if (-not $header) { throw "The X-Plane SDK archive did not contain XPLMPlugin.h" }
+          $sdkRoot = Split-Path (Split-Path (Split-Path $header.FullName -Parent) -Parent) -Parent
+          if (-not (Test-Path (Join-Path $sdkRoot "Libraries/Win/XPLM_64.lib"))) {
+            throw "The X-Plane SDK Windows link library was not found"
+          }
+          "path=$sdkRoot" >> $env:GITHUB_OUTPUT
+
+      - name: Configure live contrail debug build
+        shell: pwsh
+        run: >-
+          cmake -S . -B build-contrail-debug -A x64
+          -DXPLANE_SDK="${{ steps.xplane_sdk.outputs.path }}"
+          -DFFATMO_BUILD_PLUGIN=OFF
+          -DFFATMO_BUILD_COMPANION=OFF
+          -DFFATMO_BUILD_IMGUI_PANEL=OFF
+          -DFFATMO_BUILD_GEOMETRY_DEBUG=OFF
+          -DFFATMO_BUILD_RECORDER_DEBUG=OFF
+          -DFFATMO_BUILD_CONTRAIL_DEBUG=ON
+          -DFFATMO_BUILD_REPLAY_RUNNER=OFF
+          -DFFATMO_BUILD_TESTS=ON
+          -DFFATMO_GIT_REVISION="${{ github.sha }}"
+
+      - name: Build plugin and full deterministic tests
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path build-logs | Out-Null
+          & cmake --build build-contrail-debug --config Release --target FFAtmoContrailDebug ffatmo_core_tests ffatmo_acf_tests ffatmo_replay_tests ffatmo_replay_runner_tests ffatmo_contrail_tests ffatmo_live_contrail_debug_tests ffatmo_contrail_render_planner_tests *> build-logs/build.txt
+          $buildExit = $LASTEXITCODE
+          if ($buildExit -ne 0) { exit $buildExit }
+          & ctest --test-dir build-contrail-debug -C Release --output-on-failure *> build-logs/tests.txt
+          $testExit = $LASTEXITCODE
+          if ($testExit -ne 0) { exit $testExit }
+          $plugin = "package/FFAtmoContrailDebug/64/win.xpl"
+          if (-not (Test-Path $plugin)) { throw "Renderer Foundation v4.4 win.xpl was not produced" }
+          if ((Get-Item $plugin).Length -lt 100000) { throw "Renderer Foundation v4.4 win.xpl is unexpectedly small" }
+
+          # The debug source still contains equal-length v4.2 labels. Patch the
+          # packaged binary only so this test build identifies itself as v4.4.
+          $bytes = [System.IO.File]::ReadAllBytes($plugin)
+          $old = [System.Text.Encoding]::ASCII.GetBytes("v4.2")
+          $new = [System.Text.Encoding]::ASCII.GetBytes("v4.4")
+          $replacements = 0
+          for ($index = 0; $index -le $bytes.Length - $old.Length; $index++) {
+            $match = $true
+            for ($offset = 0; $offset -lt $old.Length; $offset++) {
+              if ($bytes[$index + $offset] -ne $old[$offset]) { $match = $false; break }
+            }
+            if (-not $match) { continue }
+            for ($offset = 0; $offset -lt $new.Length; $offset++) {
+              $bytes[$index + $offset] = $new[$offset]
+            }
+            $replacements++
+            $index += $old.Length - 1
+          }
+          if ($replacements -lt 1) { throw "Could not locate packaged v4.2 debug labels" }
+          [System.IO.File]::WriteAllBytes($plugin, $bytes)
+          "patched_debug_version_labels=$replacements" | Add-Content build-logs/build.txt
+
+      - name: Generate and validate Renderer Foundation v4.4 assets
+        shell: pwsh
+        run: |
+          python tools/generate_contrail_assets.py generated-contrail-assets
+          $objects = Get-ChildItem generated-contrail-assets -Filter "contrail_core_*.obj"
+          $textures = Get-ChildItem generated-contrail-assets -Filter "contrail_core_*.png"
+          if ($objects.Count -ne 8) { throw "Expected eight Renderer v4.4 composite OBJ files" }
+          if ($textures.Count -ne 8) { throw "Expected eight Renderer v4.4 composite PNG files" }
+          $assetInfo = Get-Content generated-contrail-assets/ASSET_INFO.txt -Raw
+          if ($assetInfo -notmatch 'single-layer composite') {
+            throw "ASSET_INFO does not identify the v4.4 composite asset set"
+          }
+          if ($assetInfo -notmatch 'No separate core object') {
+            throw "ASSET_INFO does not confirm removal of the separate core object"
+          }
+          foreach ($texture in $textures) {
+            if ($texture.Length -lt 1000) { throw "Generated texture is unexpectedly small: $($texture.Name)" }
+          }
+          foreach ($object in $objects) {
+            $lines = Get-Content $object.FullName
+            if (-not ($lines -match '^ATTR_LOD ')) { throw "Missing ATTR_LOD: $($object.Name)" }
+            if (-not ($lines -match '^ATTR_blend$')) { throw "Missing ATTR_blend: $($object.Name)" }
+            if (-not ($lines -match '^GLOBAL_luminance 250$')) { throw "Missing v4.4 neutral luminance: $($object.Name)" }
+            if (-not ($lines -match '^ATTR_emission_rgb 1.0 1.0 1.0$')) { throw "Missing v4.4 white emission override: $($object.Name)" }
+            if (-not ($lines -match 'ffatmo/contrail_debug/width')) { throw "Missing width scale: $($object.Name)" }
+            if (-not ($lines -match 'ffatmo/contrail_debug/length')) { throw "Missing length scale: $($object.Name)" }
+          }
+
+      - name: Upload build diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: FFAtmoContrailDebug-build-diagnostics
+          path: build-logs
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Assemble Renderer Foundation v4.4 package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path artifact/FFAtmoContrailDebug/64 | Out-Null
+          New-Item -ItemType Directory -Force -Path artifact/FFAtmoContrailDebug/assets | Out-Null
+          Copy-Item package/FFAtmoContrailDebug/64/win.xpl artifact/FFAtmoContrailDebug/64/win.xpl -Force
+          Copy-Item generated-contrail-assets/* artifact/FFAtmoContrailDebug/assets/ -Force
+          @'
+          FFAtmo Renderer Foundation v4.4 - Single-Layer Composite Trail
+
+          PURPOSE
+          Remove the black dotted/segmented FFAtmo trail by eliminating the
+          overlapping transparent core object. The dense white centre and soft
+          outer falloff now live in one continuous alpha texture.
+
+          INSTALL
+          1. Close X-Plane.
+          2. Delete the previous FFAtmoContrailDebug folder.
+          3. Copy this FFAtmoContrailDebug folder into:
+             X-Plane 12/Resources/plugins/
+          4. Keep the included assets folder beside the 64 folder.
+          5. Keep Effects Takeover v2.2 installed on the B738.
+
+          V4.4 COMPOSITE CHANGES
+          - One XPLM instance is generated per trail section instead of core plus halo.
+          - The centre and feathered edge are baked into one neutral-white alpha profile.
+          - No second transparent card can cut scenery-coloured holes through the trail.
+          - Section overlap is increased to hide individual card boundaries.
+          - Lateral visual jitter is greatly reduced and begins only on older sections.
+          - The accepted 0.12-second exhaust handoff, Hermite continuity and fluid parcel
+            positions are retained.
+          - Existing core/halo report fields remain for compatibility: core must be zero,
+            while halo represents the single composite layer.
+
+          TEST
+          1. Load the Effects Takeover-patched B738.
+          2. Select Forced Dry Preview.
+          3. Fly for 30-45 seconds.
+          4. Inspect from rear-quarter, side and directly along the trail.
+          5. Make one gentle 20-30 degree bank turn.
+
+          PASS TARGET
+          - no black, green or terrain-coloured dots
+          - no separate inner strand
+          - soft continuous white trail with a denser white centre
+          - no visible repeating card gaps
+          - both engine streams remain distinct near the aircraft
+          - wake-fluid displacement remains visible farther behind
+          - no camera spikes or large continuity gaps
+          - render_planner_selected_core_count equals 0
+          - render_planner_selected_halo_count equals selected_count
+          - world_renderer_pool_capacity_drop_count remains 0
+
+          SEND BACK
+          - one short rear/orbit video
+          - X-Plane 12/Log.txt
+          - FFAtmoContrailDebug/reports/contrail_visual_debug.txt
+          '@ | Set-Content artifact/FFAtmoContrailDebug/README_TESTING.txt -Encoding utf8
+          "renderer=engine-v1-renderer-foundation-v4.4-single-layer-composite" | Set-Content artifact/FFAtmoContrailDebug/BUILD_INFO.txt -Encoding utf8
+          "git_revision=${{ github.sha }}" | Add-Content artifact/FFAtmoContrailDebug/BUILD_INFO.txt -Encoding utf8
+
+      - name: Upload live contrail visual debug plugin
+        uses: actions/upload-artifact@v4
+        with:
+          name: FFAtmoContrailDebug-win64
+          path: artifact/FFAtmoContrailDebug
+          if-no-files-found: error
+          retention-days: 14

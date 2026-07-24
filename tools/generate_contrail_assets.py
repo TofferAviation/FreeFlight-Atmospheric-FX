@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate deterministic Renderer Foundation v4.3 neutral-white trail assets."""
+"""Generate deterministic Renderer Foundation v4.4 single-layer composite assets."""
 
 from __future__ import annotations
 
@@ -10,11 +10,10 @@ import struct
 import zlib
 from pathlib import Path
 
-
 WIDTH = 256
 HEIGHT = 256
 BORDER_FRACTION = 0.08
-ALPHA_LEVELS = (0.018, 0.032, 0.055, 0.085)
+ALPHA_LEVELS = (0.028, 0.045, 0.070, 0.100)
 VARIANTS = ("a", "b")
 LUMINANCE_NITS = 250
 EMISSION_RGB = "1.0 1.0 1.0"
@@ -56,65 +55,64 @@ def gaussian(distance2: float, sigma: float) -> float:
 
 def make_texture(maximum_alpha: float, seed: int) -> bytes:
     rng = random.Random(seed)
-    centreline_phase = rng.uniform(0.0, math.tau)
+    centre_phase = rng.uniform(0.0, math.tau)
     edge_phase = rng.uniform(0.0, math.tau)
-    broad_lobes = [
+    cloud_lobes = [
         (
-            rng.uniform(-0.16, 0.16),
-            rng.uniform(-0.84, 0.84),
-            rng.uniform(0.14, 0.31),
-            rng.uniform(0.42, 1.00),
+            rng.uniform(-0.28, 0.28),
+            rng.uniform(-0.88, 0.88),
+            rng.uniform(0.10, 0.28),
+            rng.uniform(0.10, 0.34),
         )
-        for _ in range(20)
-    ]
-    detail_lobes = [
-        (
-            rng.uniform(-0.42, 0.42),
-            rng.uniform(-0.92, 0.92),
-            rng.uniform(0.040, 0.115),
-            rng.uniform(0.06, 0.26),
-        )
-        for _ in range(60)
+        for _ in range(22)
     ]
 
     pixels = bytearray()
     border_pixels = int(round(WIDTH * BORDER_FRACTION))
+    centre_column_minimum = 255
+
     for y in range(HEIGHT):
         py = (2.0 * (y + 0.5) / HEIGHT) - 1.0
         for x in range(WIDTH):
             px = (2.0 * (x + 0.5) / WIDTH) - 1.0
 
             centre_offset = (
-                0.045 * math.sin(py * 4.6 + centreline_phase)
-                + 0.018 * math.sin(py * 10.7 + edge_phase)
+                0.024 * math.sin(py * 4.2 + centre_phase)
+                + 0.010 * math.sin(py * 10.1 + edge_phase)
             )
             lateral = abs(px - centre_offset)
             edge_width = (
-                0.64
-                + 0.050 * math.sin(py * 5.1 + edge_phase)
-                + 0.020 * math.sin(py * 12.3 + centreline_phase)
+                0.70
+                + 0.035 * math.sin(py * 4.8 + edge_phase)
+                + 0.015 * math.sin(py * 11.7 + centre_phase)
             )
-            lateral_envelope = 1.0 - smoothstep(0.12, max(edge_width, 0.48), lateral)
-            end_envelope = 1.0 - smoothstep(0.64, 0.96, abs(py))
 
-            broad = 0.0
-            for lx, ly, sigma, weight in broad_lobes:
-                broad += weight * gaussian((px - lx) ** 2 + (py - ly) ** 2, sigma)
-            broad = min(broad / 5.2, 1.0)
+            edge_envelope = 1.0 - smoothstep(0.34, max(edge_width, 0.56), lateral)
+            end_envelope = 1.0 - smoothstep(0.66, 0.96, abs(py))
+            broad_profile = math.exp(-((lateral / 0.37) ** 2))
+            centre_profile = math.exp(-((lateral / 0.115) ** 2))
 
-            detail = 0.0
-            for lx, ly, sigma, weight in detail_lobes:
-                detail += weight * gaussian((px - lx) ** 2 + (py - ly) ** 2, sigma)
-            detail = min(detail / 2.8, 1.0)
+            cloud_detail = 0.0
+            for lx, ly, sigma, weight in cloud_lobes:
+                cloud_detail += weight * gaussian((px - lx) ** 2 + (py - ly) ** 2, sigma)
+            cloud_detail = min(cloud_detail / 2.5, 1.0)
 
-            longitudinal_noise = 0.90 + 0.10 * math.sin(py * 8.4 + math.sin(px * 3.8))
+            longitudinal = (
+                0.93
+                + 0.045 * math.sin(py * 7.1 + centre_phase)
+                + 0.025 * math.sin(py * 15.2 + edge_phase)
+            )
+
+            # One continuous density profile: the centre and feathered halo are
+            # baked into the same alpha channel, so no second transparent card
+            # can cut a dark hole through the trail.
             density = (
-                lateral_envelope
-                * end_envelope
-                * (0.16 + 0.64 * broad + 0.20 * detail)
-                * longitudinal_noise
+                end_envelope
+                * edge_envelope
+                * (0.34 * broad_profile + 0.46 * centre_profile + 0.20 * cloud_detail)
+                * longitudinal
             )
-            density *= 0.82 + 0.18 * smoothstep(0.0, 0.8, broad)
+            density = min(max(density, 0.0), 1.0)
             alpha = min(max(maximum_alpha * density, 0.0), maximum_alpha)
 
             if (
@@ -125,7 +123,13 @@ def make_texture(maximum_alpha: float, seed: int) -> bytes:
             ):
                 alpha = 0.0
 
-            pixels.extend((255, 255, 255, int(round(alpha * 255.0))))
+            alpha_byte = int(round(alpha * 255.0))
+            if abs(px) < 0.03 and abs(py) < 0.55:
+                centre_column_minimum = min(centre_column_minimum, alpha_byte)
+            pixels.extend((255, 255, 255, alpha_byte))
+
+    if centre_column_minimum <= 0:
+        raise RuntimeError("composite texture contains a transparent centreline")
     return bytes(pixels)
 
 
@@ -136,6 +140,8 @@ def validate_pixels(name: str, pixels: bytes, maximum_alpha: float) -> None:
     border_pixels = int(round(WIDTH * BORDER_FRACTION))
     observed_maximum_alpha = 0
     nonzero_alpha = 0
+    centre_nonzero = 0
+
     for y in range(HEIGHT):
         for x in range(WIDTH):
             offset = (y * WIDTH + x) * 4
@@ -154,11 +160,16 @@ def validate_pixels(name: str, pixels: bytes, maximum_alpha: float) -> None:
             observed_maximum_alpha = max(observed_maximum_alpha, alpha)
             if alpha > 0:
                 nonzero_alpha += 1
+            if abs(x - WIDTH // 2) <= 3 and HEIGHT * 0.25 < y < HEIGHT * 0.75 and alpha > 0:
+                centre_nonzero += 1
+
     allowed_maximum = int(math.ceil(maximum_alpha * 255.0))
     if observed_maximum_alpha > allowed_maximum:
         raise RuntimeError(f"{name}: alpha exceeds configured bucket maximum")
-    if nonzero_alpha < WIDTH * HEIGHT * 0.08:
+    if nonzero_alpha < WIDTH * HEIGHT * 0.10:
         raise RuntimeError(f"{name}: texture contains too little visible structure")
+    if centre_nonzero < HEIGHT * 0.40:
+        raise RuntimeError(f"{name}: continuous composite centre is missing")
 
 
 def make_obj(path: Path, texture_name: str) -> None:
@@ -222,9 +233,9 @@ def validate_obj(path: Path, texture_name: str) -> None:
     if f"TEXTURE_LIT {texture_name}" not in lines:
         raise RuntimeError(f"{path.name}: expected neutral lit texture reference is missing")
     if f"GLOBAL_luminance {LUMINANCE_NITS}" not in lines:
-        raise RuntimeError(f"{path.name}: expected v4.3 luminance directive is missing")
+        raise RuntimeError(f"{path.name}: expected v4.4 luminance directive is missing")
     if f"ATTR_emission_rgb {EMISSION_RGB}" not in lines:
-        raise RuntimeError(f"{path.name}: expected v4.3 neutral emission override is missing")
+        raise RuntimeError(f"{path.name}: expected v4.4 neutral emission override is missing")
     if "ATTR_no_cull" not in lines or "ATTR_blend" not in lines or "ATTR_no_shadow" not in lines:
         raise RuntimeError(f"{path.name}: required transparency attributes are missing")
     if not any("ffatmo/contrail_debug/width" in line for line in lines):
@@ -242,12 +253,14 @@ def main() -> int:
     generated = []
     for bucket, maximum_alpha in enumerate(ALPHA_LEVELS):
         for variant_index, variant in enumerate(VARIANTS):
+            # Keep the legacy filename expected by the current XPLM instance
+            # loader; the contents are v4.4 composite assets, not core assets.
             stem = f"contrail_core_{bucket}_{variant}"
             texture_name = f"{stem}.png"
             object_name = f"{stem}.obj"
             texture_path = args.output / texture_name
             object_path = args.output / object_name
-            pixels = make_texture(maximum_alpha, 14300 + bucket * 19 + variant_index * 107)
+            pixels = make_texture(maximum_alpha, 14400 + bucket * 19 + variant_index * 107)
             validate_pixels(texture_name, pixels, maximum_alpha)
             write_png(texture_path, WIDTH, HEIGHT, pixels)
             make_obj(object_path, texture_name)
@@ -255,10 +268,12 @@ def main() -> int:
             generated.extend((texture_name, object_name))
 
     (args.output / "ASSET_INFO.txt").write_text(
-        "FFAtmo Renderer Foundation v4.3 deterministic asset set.\n"
-        "Neutral RGB textures plus an explicit white emission override prevent shaded black cores.\n"
+        "FFAtmo Renderer Foundation v4.4 deterministic single-layer composite asset set.\n"
+        "A dense white centre and feathered halo are baked into one continuous alpha profile.\n"
+        "No separate core object is rendered, preventing transparent depth/sorting cut-outs.\n"
         f"Neutral daytime luminance: {LUMINANCE_NITS} nits.\n"
         "Eight assets: four optical buckets and two deterministic variants.\n"
+        "Legacy contrail_core filenames are retained for loader compatibility only.\n"
         + "\n".join(generated)
         + "\n",
         encoding="utf-8",

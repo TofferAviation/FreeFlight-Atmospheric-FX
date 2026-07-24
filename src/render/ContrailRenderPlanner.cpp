@@ -87,80 +87,59 @@ float interpolate(float ageSeconds,
     return mix(value0, value1, (ageSeconds - age0) / (age1 - age0));
 }
 
-float coreHalfWidthForAge(float ageSeconds, float physicsRadiusM) {
-    float halfWidth = 0.20f;
+float compositeHalfWidthForAge(float ageSeconds, float physicsRadiusM) {
+    float halfWidth = 0.18f;
     if (ageSeconds <= 1.0f) {
-        halfWidth = interpolate(ageSeconds, 0.0f, 0.20f, 1.0f, 0.34f);
+        halfWidth = interpolate(ageSeconds, 0.0f, 0.18f, 1.0f, 0.42f);
     } else if (ageSeconds <= 4.0f) {
-        halfWidth = interpolate(ageSeconds, 1.0f, 0.34f, 4.0f, 0.62f);
-    } else if (ageSeconds <= 8.0f) {
-        halfWidth = interpolate(ageSeconds, 4.0f, 0.62f, 8.0f, 0.92f);
-    } else {
-        halfWidth = interpolate(ageSeconds, 8.0f, 0.92f, 12.0f, 1.18f);
-    }
-    const float physicsFactor = std::clamp(
-        std::sqrt(std::max(physicsRadiusM, 0.05f) / 1.25f), 0.80f, 1.10f);
-    return std::clamp(halfWidth * physicsFactor, 0.18f, 1.35f);
-}
-
-float haloHalfWidthForAge(float ageSeconds, float coreHalfWidthM) {
-    if (ageSeconds <= 0.90f) return 0.0f;
-    float halfWidth = 0.78f;
-    if (ageSeconds <= 8.0f) {
-        halfWidth = interpolate(ageSeconds, 0.90f, 0.78f, 8.0f, 2.35f);
+        halfWidth = interpolate(ageSeconds, 1.0f, 0.42f, 4.0f, 0.88f);
+    } else if (ageSeconds <= 10.0f) {
+        halfWidth = interpolate(ageSeconds, 4.0f, 0.88f, 10.0f, 1.80f);
     } else if (ageSeconds <= 22.0f) {
-        halfWidth = interpolate(ageSeconds, 8.0f, 2.35f, 22.0f, 5.20f);
+        halfWidth = interpolate(ageSeconds, 10.0f, 1.80f, 22.0f, 3.80f);
+    } else if (ageSeconds <= 45.0f) {
+        halfWidth = interpolate(ageSeconds, 22.0f, 3.80f, 45.0f, 7.20f);
     } else {
-        halfWidth = interpolate(ageSeconds, 22.0f, 5.20f, 65.0f, 11.0f);
+        halfWidth = interpolate(ageSeconds, 45.0f, 7.20f, 70.0f, 11.50f);
     }
-    return std::clamp(std::max(halfWidth, coreHalfWidthM * 1.70f), 0.78f, 12.0f);
+
+    const float physicsFactor = std::clamp(
+        std::sqrt(std::max(physicsRadiusM, 0.05f) / 1.25f), 0.78f, 1.18f);
+    return std::clamp(halfWidth * physicsFactor, 0.16f, 12.0f);
 }
 
-float targetSegmentSpacingForAge(float ageSeconds, float coreWidthM) {
-    float spacing = 2.0f;
+float targetSegmentSpacingForAge(float ageSeconds, float widthM) {
+    float spacing = 1.8f;
     if (ageSeconds <= 1.0f) {
-        spacing = interpolate(ageSeconds, 0.0f, 1.8f, 1.0f, 2.8f);
+        spacing = interpolate(ageSeconds, 0.0f, 1.5f, 1.0f, 2.4f);
     } else if (ageSeconds <= 6.0f) {
-        spacing = interpolate(ageSeconds, 1.0f, 2.8f, 6.0f, 4.5f);
+        spacing = interpolate(ageSeconds, 1.0f, 2.4f, 6.0f, 4.2f);
     } else if (ageSeconds <= 20.0f) {
-        spacing = interpolate(ageSeconds, 6.0f, 4.5f, 20.0f, 7.0f);
+        spacing = interpolate(ageSeconds, 6.0f, 4.2f, 20.0f, 6.8f);
     } else {
-        spacing = interpolate(ageSeconds, 20.0f, 7.0f, 65.0f, 12.0f);
+        spacing = interpolate(ageSeconds, 20.0f, 6.8f, 65.0f, 11.5f);
     }
-    return std::clamp(std::max(spacing, coreWidthM * 0.72f), 1.6f, 13.0f);
+    return std::clamp(std::max(spacing, widthM * 0.42f), 1.4f, 13.0f);
 }
 
-float coreAgeFactor(float ageSeconds, float maximumCoreAgeSeconds) {
-    if (ageSeconds >= maximumCoreAgeSeconds) return 0.0f;
-    if (ageSeconds <= 3.5f) return 1.0f;
-    if (ageSeconds <= 6.0f) return interpolate(ageSeconds, 3.5f, 1.0f, 6.0f, 0.55f);
-    if (ageSeconds <= 9.0f) return interpolate(ageSeconds, 6.0f, 0.55f, 9.0f, 0.18f);
-    return interpolate(ageSeconds, 9.0f, 0.18f, maximumCoreAgeSeconds, 0.0f);
-}
-
-float haloAgeFactor(float ageSeconds) {
-    if (ageSeconds <= 0.90f) return 0.0f;
-    if (ageSeconds <= 5.0f) return interpolate(ageSeconds, 0.90f, 0.08f, 5.0f, 0.30f);
-    if (ageSeconds <= 18.0f) return interpolate(ageSeconds, 5.0f, 0.30f, 18.0f, 0.58f);
-    if (ageSeconds <= 42.0f) return interpolate(ageSeconds, 18.0f, 0.58f, 42.0f, 0.44f);
-    return interpolate(ageSeconds, 42.0f, 0.44f, 70.0f, 0.16f);
+float compositeAgeFactor(float ageSeconds) {
+    if (ageSeconds <= 1.0f) return interpolate(ageSeconds, 0.0f, 0.72f, 1.0f, 0.90f);
+    if (ageSeconds <= 8.0f) return interpolate(ageSeconds, 1.0f, 0.90f, 8.0f, 0.82f);
+    if (ageSeconds <= 20.0f) return interpolate(ageSeconds, 8.0f, 0.82f, 20.0f, 0.68f);
+    if (ageSeconds <= 42.0f) return interpolate(ageSeconds, 20.0f, 0.68f, 42.0f, 0.48f);
+    return interpolate(ageSeconds, 42.0f, 0.48f, 70.0f, 0.18f);
 }
 
 float lateralJitterFraction(float ageSeconds) {
-    if (ageSeconds <= 2.0f) return 0.008f;
-    if (ageSeconds <= 20.0f) return interpolate(ageSeconds, 2.0f, 0.02f, 20.0f, 0.09f);
-    return interpolate(ageSeconds, 20.0f, 0.09f, 65.0f, 0.18f);
+    if (ageSeconds <= 2.0f) return 0.0f;
+    if (ageSeconds <= 20.0f) return interpolate(ageSeconds, 2.0f, 0.004f, 20.0f, 0.025f);
+    return interpolate(ageSeconds, 20.0f, 0.025f, 65.0f, 0.055f);
 }
 
-std::uint64_t mixId(std::uint64_t a,
-                    std::uint64_t b,
-                    std::uint32_t ordinal,
-                    ContrailRenderLayer layer) {
+std::uint64_t mixId(std::uint64_t a, std::uint64_t b, std::uint32_t ordinal) {
     std::uint64_t value = a ^ (b + 0x9e3779b97f4a7c15ull + (a << 6u) + (a >> 2u));
     value ^= static_cast<std::uint64_t>(ordinal) * 0xbf58476d1ce4e5b9ull;
-    value ^= layer == ContrailRenderLayer::Halo
-        ? 0x94d049bb133111ebull
-        : 0x2545f4914f6cdd1dull;
+    value ^= 0x94d049bb133111ebull;
     value ^= value >> 30u;
     value *= 0xbf58476d1ce4e5b9ull;
     value ^= value >> 27u;
@@ -170,20 +149,17 @@ std::uint64_t mixId(std::uint64_t a,
 }
 
 std::uint8_t opacityBucket(float strength) {
-    if (strength < 0.012f) return 0;
-    if (strength < 0.030f) return 1;
-    if (strength < 0.060f) return 2;
+    if (strength < 0.018f) return 0;
+    if (strength < 0.050f) return 1;
+    if (strength < 0.120f) return 2;
     return 3;
 }
 
 float candidatePriority(const ContrailRenderSample& sample) {
     float score = sample.opacityStrength * 1000.0f;
-    score += std::max(0.0f, 65.0f - sample.ageSeconds) * 4.0f;
+    score += std::max(0.0f, 70.0f - sample.ageSeconds) * 4.0f;
     if (sample.nearField) score += 8000.0f;
-    if (sample.ageSeconds <= 8.0f) score += 1500.0f;
-    if (sample.layer == ContrailRenderLayer::Halo && sample.ageSeconds >= 8.0f) {
-        score += 900.0f;
-    }
+    if (sample.ageSeconds <= 8.0f) score += 1300.0f;
     return score;
 }
 
@@ -267,22 +243,19 @@ void hashSample(std::uint64_t& hash, const ContrailRenderSample& sample) {
     hashValue(hash, nearField);
 }
 
-void appendLayer(std::vector<Candidate>& candidates,
-                 ContrailRenderPlannerStatistics& statistics,
-                 const ContrailRenderInput& first,
-                 const ContrailRenderInput& second,
-                 const engine::Vec3d& centrelinePosition,
-                 const engine::Vec3d& trailTangent,
-                 const engine::Vec3d& right,
-                 const engine::Vec3d& up,
-                 float ratio,
-                 float centreSpacingM,
-                 std::uint32_t ordinal,
-                 ContrailRenderLayer layer,
-                 const ContrailRenderPlannerSettings& settings) {
+void appendComposite(std::vector<Candidate>& candidates,
+                     ContrailRenderPlannerStatistics& statistics,
+                     const ContrailRenderInput& first,
+                     const ContrailRenderInput& second,
+                     const engine::Vec3d& centrelinePosition,
+                     const engine::Vec3d& trailTangent,
+                     const engine::Vec3d& right,
+                     const engine::Vec3d& up,
+                     float ratio,
+                     float centreSpacingM,
+                     std::uint32_t ordinal,
+                     const ContrailRenderPlannerSettings& settings) {
     const float age = mix(first.ageSeconds, second.ageSeconds, ratio);
-    if (layer == ContrailRenderLayer::Core && age >= settings.maximumCoreAgeSeconds) return;
-
     const float physicsRadius = mix(first.physicsRadiusM, second.physicsRadiusM, ratio);
     const float optical = mix(first.opticalDepth, second.opticalDepth, ratio);
     const float heatHandoff = smoothstep(
@@ -290,43 +263,26 @@ void appendLayer(std::vector<Candidate>& candidates,
         settings.heatHandoffFullSeconds,
         age);
     const float dryAgeFade = clamp01(1.0f - std::max(0.0f, age - 45.0f) / 25.0f);
-    const float layerFactor = layer == ContrailRenderLayer::Core
-        ? coreAgeFactor(age, settings.maximumCoreAgeSeconds)
-        : haloAgeFactor(age);
-    const float layerOpacityScale = layer == ContrailRenderLayer::Core
-        ? std::clamp(settings.coreOpacityScale, 0.0f, 1.0f)
-        : 1.0f;
-    const float strength = optical * heatHandoff * dryAgeFade * layerFactor * layerOpacityScale;
+    const float strength = optical * heatHandoff * dryAgeFade * compositeAgeFactor(age);
     if (!finite(strength) || strength < settings.minimumOpacityStrength) return;
 
-    const float coreHalfWidth = coreHalfWidthForAge(age, physicsRadius);
-    float halfWidth = layer == ContrailRenderLayer::Core
-        ? coreHalfWidth
-        : haloHalfWidthForAge(age, coreHalfWidth);
-    if (layer == ContrailRenderLayer::Halo && halfWidth <= 0.0f) return;
-
+    float halfWidth = compositeHalfWidthForAge(age, physicsRadius);
     const bool nearField = first.syntheticHead || second.syntheticHead || age < 1.0f;
     if (nearField) {
-        halfWidth *= interpolate(age, 0.0f, 0.42f, 1.0f, 1.0f);
+        halfWidth *= interpolate(age, 0.0f, 0.38f, 1.0f, 1.0f);
     }
 
     const std::uint64_t renderId = mixId(
-        first.sourceParcelId, second.sourceParcelId, ordinal, layer);
+        first.sourceParcelId, second.sourceParcelId, ordinal);
     const float phase = static_cast<float>(
-        age * 0.31 + static_cast<double>(first.engineIndex) * 1.731 +
+        age * 0.27 + static_cast<double>(first.engineIndex) * 1.731 +
         static_cast<double>((renderId >> 12u) & 0xffu) * 0.0027);
 
     engine::Vec3d position = centrelinePosition;
     const float jitter = halfWidth * lateralJitterFraction(age);
-    if (!nearField) {
-        if (layer == ContrailRenderLayer::Core) {
-            position = add(position, multiply(right, jitter * 0.55f * std::sin(phase)));
-            position = add(position, multiply(up, jitter * 0.10f * std::cos(phase * 0.71f)));
-        } else {
-            const float growth = clamp01((age - 0.90f) / 35.0f);
-            position = add(position, multiply(right, jitter * 1.7f * growth * std::sin(phase * 0.59f)));
-            position = add(position, multiply(up, jitter * 0.40f * growth * std::cos(phase * 0.43f)));
-        }
+    if (!nearField && jitter > 0.0f) {
+        position = add(position, multiply(right, jitter * std::sin(phase)));
+        position = add(position, multiply(up, jitter * 0.22f * std::cos(phase * 0.61f)));
     }
 
     ContrailRenderSample sample;
@@ -336,44 +292,23 @@ void appendLayer(std::vector<Candidate>& candidates,
     sample.localPositionM = position;
     sample.trailTangentLocal = normalized(trailTangent, {0.0, 0.0, -1.0});
     sample.widthM = std::clamp(halfWidth * 2.0f, 0.30f, 24.0f);
-    const float overlapFactor = nearField ? 1.20f :
-        (layer == ContrailRenderLayer::Core ? 1.24f : 1.55f);
+    const float overlapFactor = nearField ? 1.35f : 1.72f;
     sample.lengthM = std::clamp(
-        std::max(centreSpacingM * overlapFactor, sample.widthM * 1.08f),
+        std::max(centreSpacingM * overlapFactor, sample.widthM * 1.06f),
         0.60f,
-        layer == ContrailRenderLayer::Core ? 14.0f : 30.0f);
+        34.0f);
     sample.opacityStrength = strength;
     sample.ageSeconds = age;
     sample.opacityBucket = opacityBucket(strength);
-    if (layer == ContrailRenderLayer::Core) {
-        const std::uint8_t maximumBucket = std::min<std::uint8_t>(
-            settings.maximumCoreOpacityBucket,
-            static_cast<std::uint8_t>(kContrailOpacityBucketCount - 1));
-        if (sample.opacityBucket > maximumBucket) {
-            sample.opacityBucket = maximumBucket;
-            ++statistics.coreBucketClampCount;
-        }
-    } else if (sample.opacityBucket > 0) {
-        --sample.opacityBucket;
-    }
     sample.textureVariant = static_cast<std::uint8_t>(
         (renderId ^ (static_cast<std::uint64_t>(first.engineIndex) * 0x9e3779b9u)) & 1u);
-    sample.layer = layer;
+    sample.layer = ContrailRenderLayer::Composite;
     sample.nearField = nearField;
     sample.priority = candidatePriority(sample);
     candidates.push_back({sample});
     ++statistics.generatedByBucket[sample.opacityBucket];
     if (nearField) ++statistics.generatedNearFieldCount;
-    if (layer == ContrailRenderLayer::Core) {
-        ++statistics.generatedCoreCount;
-    } else {
-        ++statistics.generatedHaloCount;
-    }
-}
-
-std::size_t queueIndex(std::uint32_t engineIndex, ContrailRenderLayer layer) {
-    return static_cast<std::size_t>(engineIndex) * 2u +
-           (layer == ContrailRenderLayer::Core ? 0u : 1u);
+    ++statistics.generatedHaloCount;
 }
 
 }  // namespace
@@ -393,7 +328,7 @@ ContrailRenderPlan planContrailRenderSamples(
     }
 
     std::vector<Candidate> candidates;
-    candidates.reserve(statistics.validParcelCount * 8);
+    candidates.reserve(statistics.validParcelCount * 6);
     const std::size_t maximumSubdivisions = std::max<std::size_t>(
         1, std::min<std::size_t>(settings.maximumSamplesPerSegment, 8));
 
@@ -407,21 +342,20 @@ ContrailRenderPlan planContrailRenderSamples(
         });
 
         if (stream.size() == 1) {
-            const float width = coreHalfWidthForAge(
+            const float width = compositeHalfWidthForAge(
                 stream.front().ageSeconds, stream.front().physicsRadiusM) * 2.0f;
-            appendLayer(candidates,
-                        statistics,
-                        stream.front(),
-                        stream.front(),
-                        stream.front().localPositionM,
-                        {0.0, 0.0, -1.0},
-                        {1.0, 0.0, 0.0},
-                        {0.0, 1.0, 0.0},
-                        0.0f,
-                        std::max(width, 0.6f),
-                        0,
-                        ContrailRenderLayer::Core,
-                        settings);
+            appendComposite(candidates,
+                            statistics,
+                            stream.front(),
+                            stream.front(),
+                            stream.front().localPositionM,
+                            {0.0, 0.0, -1.0},
+                            {1.0, 0.0, 0.0},
+                            {0.0, 1.0, 0.0},
+                            0.0f,
+                            std::max(width, 0.6f),
+                            0,
+                            settings);
             continue;
         }
 
@@ -438,8 +372,8 @@ ContrailRenderPlan planContrailRenderSamples(
 
             const float meanAge = 0.5f * (first.ageSeconds + second.ageSeconds);
             const float meanPhysicsRadius = 0.5f * (first.physicsRadiusM + second.physicsRadiusM);
-            const float coreWidth = coreHalfWidthForAge(meanAge, meanPhysicsRadius) * 2.0f;
-            const float targetSpacing = targetSegmentSpacingForAge(meanAge, coreWidth);
+            const float width = compositeHalfWidthForAge(meanAge, meanPhysicsRadius) * 2.0f;
+            const float targetSpacing = targetSegmentSpacingForAge(meanAge, width);
             const std::size_t subdivisions = std::clamp<std::size_t>(
                 static_cast<std::size_t>(std::ceil(gapM / std::max(targetSpacing, 0.01f))),
                 1,
@@ -477,21 +411,7 @@ ContrailRenderPlan planContrailRenderSamples(
                     statistics.maximumCurveDeviationM, curveDeviation);
                 const std::uint32_t ordinal = static_cast<std::uint32_t>(
                     (index & 0xffffu) * 16u + step);
-                appendLayer(candidates,
-                            statistics,
-                            first,
-                            second,
-                            position,
-                            trailTangent,
-                            right,
-                            up,
-                            ratio,
-                            centreSpacingM,
-                            ordinal,
-                            ContrailRenderLayer::Core,
-                            settings);
-                if (mix(first.ageSeconds, second.ageSeconds, ratio) > 0.90f) {
-                    appendLayer(candidates,
+                appendComposite(candidates,
                                 statistics,
                                 first,
                                 second,
@@ -502,9 +422,7 @@ ContrailRenderPlan planContrailRenderSamples(
                                 ratio,
                                 centreSpacingM,
                                 ordinal,
-                                ContrailRenderLayer::Halo,
                                 settings);
-                }
             }
         }
     }
@@ -518,11 +436,9 @@ ContrailRenderPlan planContrailRenderSamples(
         return result;
     }
 
-    constexpr std::size_t kQueueCount = engine::kMaximumRecordedEngines * 2u;
-    std::array<std::vector<std::size_t>, kQueueCount> queues;
+    std::array<std::vector<std::size_t>, engine::kMaximumRecordedEngines> queues;
     for (std::size_t index = 0; index < candidates.size(); ++index) {
-        const auto& sample = candidates[index].sample;
-        queues[queueIndex(sample.engineIndex, sample.layer)].push_back(index);
+        queues[candidates[index].sample.engineIndex].push_back(index);
     }
     for (auto& queue : queues) {
         std::stable_sort(queue.begin(), queue.end(), [&](std::size_t a, std::size_t b) {
@@ -535,18 +451,13 @@ ContrailRenderPlan planContrailRenderSamples(
         });
     }
 
-    std::array<std::size_t, kQueueCount> cursors {};
-    std::array<bool, kQueueCount> closed {};
-    std::array<bool, kQueueCount> hasLast {};
-    std::array<engine::Vec3d, kQueueCount> lastPosition {};
+    std::array<std::size_t, engine::kMaximumRecordedEngines> cursors {};
+    std::array<bool, engine::kMaximumRecordedEngines> closed {};
+    std::array<bool, engine::kMaximumRecordedEngines> hasLast {};
+    std::array<engine::Vec3d, engine::kMaximumRecordedEngines> lastPosition {};
     std::array<std::size_t, kContrailRenderAssetCount> assetUsage {};
     std::vector<ContrailRenderSample> selected;
     selected.reserve(std::min(capacity, candidates.size()));
-
-    const float coreShare = std::clamp(settings.maximumCoreShare, 0.0f, 1.0f);
-    const std::size_t maximumCoreSamples = static_cast<std::size_t>(
-        std::floor(static_cast<double>(capacity) * static_cast<double>(coreShare)));
-    std::size_t selectedCoreSamples = 0;
 
     auto selectAsset = [&](ContrailRenderSample& sample) -> bool {
         const int originalBucket = static_cast<int>(sample.opacityBucket);
@@ -554,10 +465,6 @@ ContrailRenderPlan planContrailRenderSamples(
         for (const int offset : bucketOffsets) {
             const int bucket = originalBucket + offset;
             if (bucket < 0 || bucket >= static_cast<int>(kContrailOpacityBucketCount)) continue;
-            if (sample.layer == ContrailRenderLayer::Core &&
-                bucket > static_cast<int>(settings.maximumCoreOpacityBucket)) {
-                continue;
-            }
             const std::size_t preferred = sample.textureVariant % kContrailTextureVariantCount;
             for (std::size_t variantPass = 0; variantPass < 2; ++variantPass) {
                 const std::size_t variant = variantPass == 0 ? preferred : 1u - preferred;
@@ -575,12 +482,8 @@ ContrailRenderPlan planContrailRenderSamples(
         return false;
     };
 
-    auto chooseNext = [&](std::size_t queueId, ContrailRenderLayer layer) -> bool {
+    auto chooseNext = [&](std::size_t queueId) -> bool {
         if (closed[queueId]) return false;
-        if (layer == ContrailRenderLayer::Core && selectedCoreSamples >= maximumCoreSamples) {
-            closed[queueId] = true;
-            return false;
-        }
         auto& queue = queues[queueId];
         auto& cursor = cursors[queueId];
         while (cursor < queue.size()) {
@@ -597,7 +500,6 @@ ContrailRenderPlan planContrailRenderSamples(
             }
             if (!selectAsset(sample)) continue;
             selected.push_back(sample);
-            if (layer == ContrailRenderLayer::Core) ++selectedCoreSamples;
             hasLast[queueId] = true;
             lastPosition[queueId] = sample.localPositionM;
             return true;
@@ -611,13 +513,7 @@ ContrailRenderPlan planContrailRenderSamples(
         for (std::uint32_t engineIndex = 0;
              engineIndex < engine::kMaximumRecordedEngines && selected.size() < capacity;
              ++engineIndex) {
-            const std::size_t coreQueue = queueIndex(engineIndex, ContrailRenderLayer::Core);
-            const std::size_t haloQueue = queueIndex(engineIndex, ContrailRenderLayer::Halo);
-            progress = chooseNext(coreQueue, ContrailRenderLayer::Core) || progress;
-            if (selected.size() >= capacity) break;
-            progress = chooseNext(haloQueue, ContrailRenderLayer::Halo) || progress;
-            if (selected.size() >= capacity) break;
-            progress = chooseNext(haloQueue, ContrailRenderLayer::Halo) || progress;
+            progress = chooseNext(engineIndex) || progress;
         }
         if (!progress) break;
     }
@@ -626,7 +522,6 @@ ContrailRenderPlan planContrailRenderSamples(
     std::stable_sort(result.samples.begin(), result.samples.end(), [](const auto& a, const auto& b) {
         if (a.engineIndex != b.engineIndex) return a.engineIndex < b.engineIndex;
         if (a.ageSeconds != b.ageSeconds) return a.ageSeconds > b.ageSeconds;
-        if (a.layer != b.layer) return a.layer == ContrailRenderLayer::Core;
         return a.renderId < b.renderId;
     });
 
@@ -638,11 +533,7 @@ ContrailRenderPlan planContrailRenderSamples(
             static_cast<std::size_t>(sample.textureVariant);
         ++statistics.selectedByAsset[assetIndex];
         if (sample.nearField) ++statistics.selectedNearFieldCount;
-        if (sample.layer == ContrailRenderLayer::Core) {
-            ++statistics.selectedCoreCount;
-        } else {
-            ++statistics.selectedHaloCount;
-        }
+        ++statistics.selectedHaloCount;
     }
 
     std::uint64_t hash = kFnvOffset;

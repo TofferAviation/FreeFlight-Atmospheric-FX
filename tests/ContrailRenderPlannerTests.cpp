@@ -102,35 +102,40 @@ int main() {
 
     require(!first.samples.empty(), "planner produces visible trail sections");
     require(first.statistics.deterministicHash == second.statistics.deterministicHash,
-            "same inputs produce the same v4.3 plan hash");
+            "same inputs produce the same v4.4 plan hash");
     require(first.samples.size() == second.samples.size(),
             "same inputs produce the same sample count");
-    require(first.statistics.selectedCoreCount > 0, "short white core sections are selected");
-    require(first.statistics.selectedHaloCount > 0, "halo sections are selected");
+    require(first.statistics.selectedCoreCount == 0,
+            "v4.4 never selects a separate core object");
+    require(first.statistics.generatedCoreCount == 0,
+            "v4.4 never generates a separate core object");
+    require(first.statistics.selectedHaloCount == first.statistics.selectedSampleCount,
+            "legacy halo counter represents every composite section");
+    require(first.statistics.generatedHaloCount == first.statistics.generatedSampleCount,
+            "every generated section belongs to the single composite layer");
     require(first.statistics.generatedNearFieldCount > 0,
             "synthetic exhaust heads generate near-field sections");
     require(first.statistics.selectedNearFieldCount > 0,
             "near-field sections survive continuity-first selection");
     require(first.statistics.selectedSampleCount <= settings.visibleCapacity,
             "global visible capacity is respected");
-    require(first.statistics.selectedCoreCount <= static_cast<std::size_t>(
-                std::floor(settings.visibleCapacity * settings.maximumCoreShare)),
-            "core selection remains inside the configured share");
     require(first.statistics.maximumSelectedSpacingM <=
                 settings.maximumSelectedSpacingM + 1.0e-6,
             "selected streams never exceed the hard continuity spacing");
     require(first.statistics.maximumCurveDeviationM <= 11.0 + 1.0e-6,
             "curved interpolation is clamped to 22 percent of a 50 metre segment");
-    require(first.statistics.generatedSampleCount < inputs.size() * 20,
-            "v4.3 avoids runaway near-field over-generation");
-    require(first.statistics.coreBucketClampCount > 0,
-            "high optical input exercises the white-core opacity clamp");
+    require(first.statistics.generatedSampleCount < inputs.size() * 10,
+            "single-layer planning halves the previous overlapping generation");
+    require(first.statistics.coreBucketClampCount == 0,
+            "composite planning does not use the legacy core bucket clamp");
 
     std::unordered_set<std::uint64_t> renderIds;
     std::array<std::size_t, render::kContrailRenderAssetCount> observedByAsset {};
     for (const auto& sample : first.samples) {
         require(renderIds.insert(sample.renderId).second,
                 "every selected section has a unique persistent render id");
+        require(sample.layer == render::ContrailRenderLayer::Composite,
+                "every section uses the single composite layer");
         if (sample.engineIndex == 0) {
             require(sample.localPositionM.x < 0.0,
                     "left-engine interpolation never crosses into the right stream");
@@ -139,17 +144,9 @@ int main() {
                     "right-engine interpolation never crosses into the left stream");
         }
         require(sample.widthM >= 0.30f && sample.widthM <= 24.0f,
-                "section width stays inside v4.3 hard limits");
-        require(sample.lengthM >= 0.60f && sample.lengthM <= 30.0f,
-                "section length stays inside v4.3 hard limits");
-        if (sample.layer == render::ContrailRenderLayer::Core) {
-            require(sample.ageSeconds < settings.maximumCoreAgeSeconds,
-                    "dense centre ends by twelve seconds");
-            require(sample.opacityBucket <= settings.maximumCoreOpacityBucket,
-                    "core never enters the dark high-opacity buckets");
-            require(sample.lengthM <= 14.0f + 1.0e-6f,
-                    "core sections remain short enough to avoid tube-like strands");
-        }
+                "section width stays inside v4.4 hard limits");
+        require(sample.lengthM >= 0.60f && sample.lengthM <= 34.0f,
+                "section length stays inside v4.4 hard limits");
         const std::size_t assetIndex =
             static_cast<std::size_t>(sample.opacityBucket) *
                 render::kContrailTextureVariantCount +
@@ -183,13 +180,17 @@ int main() {
     for (const auto& sample : limited.samples) {
         if (sample.engineIndex == 0) ++engine0Count;
         if (sample.engineIndex == 1) ++engine1Count;
+        require(sample.layer == render::ContrailRenderLayer::Composite,
+                "capacity-limited samples remain composite-only");
     }
-    require(engine0Count >= 24 && engine1Count >= 24,
+    require(engine0Count >= 48 && engine1Count >= 48,
             "round-robin continuity selection protects both engines");
     require(limited.statistics.capacityRejectedCount > 0,
             "old sections are rejected when the visible budget is full");
-    require(limited.statistics.selectedHaloCount >= limited.statistics.selectedCoreCount,
-            "capacity pressure never makes the old dense core dominant");
+    require(limited.statistics.selectedCoreCount == 0,
+            "capacity pressure cannot reintroduce a separate core layer");
+    require(limited.statistics.selectedHaloCount == limited.samples.size(),
+            "all capacity-selected samples remain the composite layer");
     for (std::size_t assetIndex = 0;
          assetIndex < limited.statistics.selectedByAsset.size();
          ++assetIndex) {
@@ -207,6 +208,6 @@ int main() {
     require(brokenPlan.statistics.streamBreakCount == 1,
             "segments beyond the 250 metre continuity limit are not bridged");
 
-    std::cout << "FFAtmo Renderer Foundation v4.3 white-core tests passed\n";
+    std::cout << "FFAtmo Renderer Foundation v4.4 single-layer composite tests passed\n";
     return 0;
 }

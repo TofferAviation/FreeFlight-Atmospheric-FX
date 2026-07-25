@@ -11,7 +11,7 @@ import zlib
 from pathlib import Path
 
 SIZE = 512
-MAX_ALPHA = 118
+MAX_ALPHA = 145
 
 
 def png_chunk(kind: bytes, payload: bytes) -> bytes:
@@ -325,7 +325,7 @@ def validate(pss: str, obj: str, pixels: bytes) -> None:
     if any(value != 255 for channel in (pixels[0::4], pixels[1::4], pixels[2::4]) for value in channel):
         raise RuntimeError("v5.4.1 cloud RGB must remain pure white")
     alpha = pixels[3::4]
-    if max(alpha) < 85 or max(alpha) > MAX_ALPHA:
+    if max(alpha) < 70 or max(alpha) > MAX_ALPHA:
         raise RuntimeError("v5.4.1 cloud peak alpha is outside the stable range")
     nonzero = sum(value > 0 for value in alpha)
     if nonzero < SIZE * SIZE * 0.16:

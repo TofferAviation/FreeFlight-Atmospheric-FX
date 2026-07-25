@@ -14,17 +14,19 @@
 #include <cstdint>
 #include <filesystem>
 #include <string>
+#include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace ffatmo {
 
-// Renderer Foundation v5.4 ultra-real pooled billboard field.
+// Renderer Foundation v5.4.1 stabilised billboard cloud field.
 //
-// The working v5.3 ATTACH-billboard path is retained. Each XPLM instance is
-// driven directly by one deterministic wake-render sample. v5.4 increases the
-// pool, overlaps neighbouring sections using both wake width and section
-// length, and gives each cloud a stable three-dimensional offset so the trail
-// reads as an ice-cloud volume rather than a thin centreline.
+// v5.4 proved that one oversized billboard per selected section creates opaque
+// cotton blobs and magnifies every wake bend. v5.4.1 keeps the proven attached
+// billboard path but gives each render ID persistent ownership of one XPLM
+// instance, restores physically scaled low-opacity puffs, and only records
+// wake-turn/descent diagnostics for the later controlled swirl pass.
 //
 // The particle OBJ is never loaded during XPluginStart/XPluginEnable. The
 // safe-start gate waits for three consecutive non-empty flight-loop updates.
@@ -55,6 +57,15 @@ public:
         instances_.fill(nullptr);
         active_.fill(false);
         usedThisFrame_.fill(false);
+        slotBound_.fill(false);
+        boundRenderIds_.fill(0);
+        renderIdToPool_.clear();
+        ownershipReuseCount_ = 0;
+        ownershipNewBindingCount_ = 0;
+        ownershipReleaseCount_ = 0;
+        maximumWakeTurnDeg_ = 0.0;
+        maximumWakeDescentM_ = 0.0;
+        swirlCandidateCount_ = 0;
         enabled_ = true;
         loadAttempted_ = false;
         deferredNonEmptyFrameCount_ = 0;
@@ -71,20 +82,20 @@ public:
 
         if (!rateDataRef_ || !sizeDataRef_ ||
             !alphaDataRef_ || !lifetimeDataRef_) {
-            log("Could not register Renderer v5.4 billboard instance datarefs.\n");
+            log("Could not register Renderer v5.4.1 billboard instance datarefs.\n");
             stop();
             return false;
         }
 
         if (!std::filesystem::exists(objectPath_)) {
-            log("Missing Renderer v5.4 billboard asset: " +
+            log("Missing Renderer v5.4.1 billboard asset: " +
                 objectPath_.string() + "\n");
             stop();
             return false;
         }
 
         running_ = true;
-        log("Renderer v5.4 armed; billboard OBJ load is deferred until live wake samples exist.\n");
+        log("Renderer v5.4.1 armed; stable billboard OBJ load is deferred until live wake samples exist.\n");
         return true;
     }
 
@@ -119,6 +130,12 @@ public:
         renderedPerAsset_.fill(0);
         visibleInstanceCount_ = 0;
         usedThisFrame_.fill(false);
+        ownershipReuseCount_ = 0;
+        ownershipNewBindingCount_ = 0;
+        ownershipReleaseCount_ = 0;
+        maximumWakeTurnDeg_ = 0.0;
+        maximumWakeDescentM_ = 0.0;
+        swirlCandidateCount_ = 0;
 
         if (!enabled_ || !running_) {
             hideAllInstances();
@@ -138,12 +155,12 @@ public:
                 loadAttempted_ = true;
                 object_ = XPLMLoadObject(objectPath_.string().c_str());
                 if (!object_) {
-                    log("Renderer v5.4 could not load the deferred billboard OBJ.\n");
+                    log("Renderer v5.4.1 could not load the deferred billboard OBJ.\n");
                     return;
                 }
 
                 loadedObjectCount_ = 1;
-                log("Renderer v5.4 billboard object loaded after the safe-start gate.\n");
+                log("Renderer v5.4.1 billboard object loaded after the safe-start gate.\n");
             }
         }
 
@@ -192,29 +209,76 @@ public:
         appendStreamSelection(perEngine[0], budgets[0], selected);
         appendStreamSelection(perEngine[1], budgets[1], selected);
         selectedPerAsset_[0] = selected.size();
+        updateSwirlDiagnostics(selected);
 
-        std::size_t selectedIndex = 0;
-        std::size_t rendered = 0;
-        for (std::size_t poolIndex = 0;
-             poolIndex < createdInstanceCount_ && selectedIndex < selected.size();
-             ++poolIndex) {
-            if (!instances_[poolIndex]) continue;
-            setBillboard(poolIndex, *selected[selectedIndex++]);
+        struct Assignment {
+            std::size_t poolIndex = 0;
+            const render::ContrailRenderSample* sample = nullptr;
+        };
+        std::vector<Assignment> assignments;
+        assignments.reserve(selected.size());
+        std::vector<const render::ContrailRenderSample*> pending;
+        pending.reserve(selected.size());
+
+        // First retain every render ID that was visible in the previous frame.
+        // This prevents cloud puffs from being reassigned by vector position.
+        for (const auto* sample : selected) {
+            const auto existing = renderIdToPool_.find(sample->renderId);
+            if (existing == renderIdToPool_.end()) {
+                pending.push_back(sample);
+                continue;
+            }
+
+            const std::size_t poolIndex = existing->second;
+            if (poolIndex >= createdInstanceCount_ ||
+                !instances_[poolIndex] ||
+                usedThisFrame_[poolIndex] ||
+                !slotBound_[poolIndex] ||
+                boundRenderIds_[poolIndex] != sample->renderId) {
+                renderIdToPool_.erase(existing);
+                pending.push_back(sample);
+                continue;
+            }
+
             usedThisFrame_[poolIndex] = true;
-            ++rendered;
+            assignments.push_back({poolIndex, sample});
+            ++ownershipReuseCount_;
+        }
+
+        std::size_t searchCursor = 0;
+        for (const auto* sample : pending) {
+            while (searchCursor < createdInstanceCount_ &&
+                   (!instances_[searchCursor] || usedThisFrame_[searchCursor])) {
+                ++searchCursor;
+            }
+            if (searchCursor >= createdInstanceCount_) break;
+
+            const std::size_t poolIndex = searchCursor++;
+            releaseOwnership(poolIndex);
+            slotBound_[poolIndex] = true;
+            boundRenderIds_[poolIndex] = sample->renderId;
+            renderIdToPool_[sample->renderId] = poolIndex;
+            usedThisFrame_[poolIndex] = true;
+            assignments.push_back({poolIndex, sample});
+            ++ownershipNewBindingCount_;
+        }
+
+        for (const auto& assignment : assignments) {
+            setBillboard(assignment.poolIndex, *assignment.sample);
         }
 
         for (std::size_t poolIndex = 0;
              poolIndex < createdInstanceCount_;
              ++poolIndex) {
             if (!instances_[poolIndex] || usedThisFrame_[poolIndex]) continue;
-            hideInstance(poolIndex);
+            if (active_[poolIndex]) hideInstance(poolIndex);
+            releaseOwnership(poolIndex);
         }
 
-        visibleInstanceCount_ = rendered;
-        renderedPerAsset_[0] = rendered;
-        if (selectedIndex < selected.size()) {
-            poolCapacityDropCount_ += selected.size() - selectedIndex;
+        visibleInstanceCount_ = assignments.size();
+        renderedPerAsset_[0] = assignments.size();
+        if (assignments.size() < selected.size()) {
+            poolCapacityDropCount_ += selected.size() - assignments.size();
         }
     }
 
@@ -242,6 +306,30 @@ public:
         return poolCapacityDropCount_;
     }
 
+    std::size_t ownershipReuseCount() const {
+        return ownershipReuseCount_;
+    }
+
+    std::size_t ownershipNewBindingCount() const {
+        return ownershipNewBindingCount_;
+    }
+
+    std::size_t ownershipReleaseCount() const {
+        return ownershipReleaseCount_;
+    }
+
+    double maximumWakeTurnDeg() const {
+        return maximumWakeTurnDeg_;
+    }
+
+    double maximumWakeDescentM() const {
+        return maximumWakeDescentM_;
+    }
+
+    std::size_t swirlCandidateCount() const {
+        return swirlCandidateCount_;
+    }
+
     double maximumBillboardErrorDeg() const { return 0.0; }
     double maximumTrailAlignmentErrorDeg() const { return 0.0; }
     double minimumTrailProjectionFactor() const { return 1.0; }
@@ -259,6 +347,7 @@ private:
     using FloatReadCallback = float (*)(void*);
     static constexpr std::size_t kInstanceCreationBatch = 48;
     static constexpr float kTwoPi = 6.28318530718f;
+    static constexpr double kRadiansToDegrees = 57.29577951308232;
 
     static void log(const std::string& message) {
         XPLMDebugString(
@@ -333,6 +422,19 @@ private:
                static_cast<float>(0x01000000ULL);
     }
 
+    static void normalizeTangent(double& x, double& y, double& z) {
+        const double magnitude = std::sqrt(x * x + y * y + z * z);
+        if (magnitude > 1.0e-6 && std::isfinite(magnitude)) {
+            x /= magnitude;
+            y /= magnitude;
+            z /= magnitude;
+        } else {
+            x = 0.0;
+            y = 0.0;
+            z = -1.0;
+        }
+    }
+
     std::size_t availableInstanceCount() const {
         std::size_t count = 0;
         for (std::size_t index = 0; index < createdInstanceCount_; ++index) {
@@ -367,7 +469,7 @@ private:
 
         if (createdInstanceCount_ == instances_.size() && !poolReadyLogged_) {
             poolReadyLogged_ = true;
-            log("Renderer v5.4 1024-cloud billboard field is fully allocated.\n");
+            log("Renderer v5.4.1 1024-cloud stable billboard field is fully allocated.\n");
         }
     }
 
@@ -378,7 +480,21 @@ private:
         }
         active_.fill(false);
         usedThisFrame_.fill(false);
+        slotBound_.fill(false);
+        boundRenderIds_.fill(0);
+        renderIdToPool_.clear();
         createdInstanceCount_ = 0;
+    }
+
+    void releaseOwnership(std::size_t poolIndex) {
+        if (poolIndex >= slotBound_.size() || !slotBound_[poolIndex]) return;
+        const auto existing = renderIdToPool_.find(boundRenderIds_[poolIndex]);
+        if (existing != renderIdToPool_.end() && existing->second == poolIndex) {
+            renderIdToPool_.erase(existing);
+        }
+        slotBound_[poolIndex] = false;
+        boundRenderIds_[poolIndex] = 0;
+        ++ownershipReleaseCount_;
     }
 
     static void appendStreamSelection(
@@ -398,14 +514,13 @@ private:
             return;
         }
 
-        // Preserve both the condensation head and the oldest wake parcel. The
-        // mild power curve keeps extra near-field resolution without starving
-        // the far-wake roll-up that produces the visible swirl.
+        // Preserve the condensation head and far wake while maintaining a
+        // smoother age distribution than v5.4's oversized continuity puffs.
         for (std::size_t slot = 0; slot < budget; ++slot) {
             const double t = static_cast<double>(slot) /
                              static_cast<double>(budget - 1);
             std::size_t index = static_cast<std::size_t>(std::llround(
-                std::pow(t, 1.18) * static_cast<double>(stream.size() - 1)));
+                std::pow(t, 1.12) * static_cast<double>(stream.size() - 1)));
             while (index + 1 < stream.size() && chosen[index]) ++index;
             if (chosen[index]) {
                 while (index > 0 && chosen[index]) --index;
@@ -426,6 +541,52 @@ private:
         }
     }
 
+    void updateSwirlDiagnostics(
+        const std::vector<const render::ContrailRenderSample*>& selected) {
+        std::array<std::vector<const render::ContrailRenderSample*>, 2> streams;
+        for (const auto* sample : selected) {
+            if (sample->engineIndex < streams.size()) {
+                streams[sample->engineIndex].push_back(sample);
+            }
+            if (sample->ageSeconds >= 4.0f && sample->ageSeconds <= 45.0f) {
+                ++swirlCandidateCount_;
+            }
+        }
+
+        for (auto& stream : streams) {
+            if (stream.empty()) continue;
+            std::stable_sort(stream.begin(), stream.end(), [](const auto* lhs, const auto* rhs) {
+                if (lhs->ageSeconds != rhs->ageSeconds) {
+                    return lhs->ageSeconds < rhs->ageSeconds;
+                }
+                return lhs->renderId < rhs->renderId;
+            });
+
+            maximumWakeDescentM_ = std::max(
+                maximumWakeDescentM_,
+                std::max(0.0,
+                    stream.front()->localPositionM.y -
+                    stream.back()->localPositionM.y));
+
+            for (std::size_t index = 1; index < stream.size(); ++index) {
+                double ax = stream[index - 1]->trailTangentLocal.x;
+                double ay = stream[index - 1]->trailTangentLocal.y;
+                double az = stream[index - 1]->trailTangentLocal.z;
+                double bx = stream[index]->trailTangentLocal.x;
+                double by = stream[index]->trailTangentLocal.y;
+                double bz = stream[index]->trailTangentLocal.z;
+                normalizeTangent(ax, ay, az);
+                normalizeTangent(bx, by, bz);
+                const double cosine = std::clamp(
+                    ax * bx + ay * by + az * bz, -1.0, 1.0);
+                const double angleDeg = std::acos(cosine) * kRadiansToDegrees;
+                if (std::isfinite(angleDeg)) {
+                    maximumWakeTurnDeg_ = std::max(maximumWakeTurnDeg_, angleDeg);
+                }
+            }
+        }
+    }
+
     void setBillboard(
         std::size_t poolIndex,
         const render::ContrailRenderSample& sample) {
@@ -434,16 +595,7 @@ private:
         double tx = sample.trailTangentLocal.x;
         double ty = sample.trailTangentLocal.y;
         double tz = sample.trailTangentLocal.z;
-        const double tangentLength = std::sqrt(tx * tx + ty * ty + tz * tz);
-        if (tangentLength > 1.0e-6) {
-            tx /= tangentLength;
-            ty /= tangentLength;
-            tz /= tangentLength;
-        } else {
-            tx = 0.0;
-            ty = 0.0;
-            tz = -1.0;
-        }
+        normalizeTangent(tx, ty, tz);
 
         double sx = -tz;
         double sy = 0.0;
@@ -471,20 +623,21 @@ private:
         const float sizeHash = unitHash(seed ^ 0xbf58476d1ce4e5b9ULL);
         const float densityHash = unitHash(seed ^ 0x632be59bd9b4e019ULL);
 
-        const float ageSpread = smoothstep(1.0f, 24.0f, sample.ageSeconds);
+        const float ageSpread = smoothstep(2.0f, 30.0f, sample.ageSeconds);
         const float crossSectionScale = sample.nearField
-            ? 0.055f
-            : 0.14f + 0.14f * ageSpread;
+            ? 0.012f
+            : 0.040f + 0.055f * ageSpread;
         const float radialOffset = std::min(
             sample.widthM * crossSectionScale *
-                std::pow(std::max(radialHash, 0.0001f), 1.65f),
-            4.5f);
+                std::pow(std::max(radialHash, 0.0001f), 1.85f),
+            1.80f);
         const double lateral = std::cos(angle) * radialOffset;
         const double vertical = std::sin(angle) * radialOffset;
 
         const float maximumAxialJitter = std::min(
-            std::max(sample.lengthM, 0.25f) * 0.28f,
-            sample.nearField ? 0.35f : 1.80f);
+            std::max(sample.lengthM, 0.25f) *
+                (sample.nearField ? 0.025f : 0.075f),
+            sample.nearField ? 0.08f : 0.45f);
         const double axial = (static_cast<double>(axialHash) - 0.5) *
                              2.0 * maximumAxialJitter;
 
@@ -500,35 +653,32 @@ private:
         drawInfo.heading = 0.0f;
         drawInfo.roll = 0.0f;
 
-        // A cloud must overlap its neighbours along the trail as well as fill
-        // the wake cross-section. Using section length here removes the dotted
-        // look without returning to a stretched ribbon or card.
-        const float widthDrivenSize = sample.widthM *
-            (sample.nearField ? 1.08f : 1.48f + 0.22f * ageSpread);
-        const float continuitySize = std::max(
-            sample.lengthM * (sample.nearField ? 1.18f : 1.52f),
-            widthDrivenSize);
-        const float sizeVariation = 0.88f + 0.24f * sizeHash;
+        // Size follows physical wake width only. Section length is deliberately
+        // excluded so sparse planner samples cannot become giant opaque blobs.
+        const float physicalScale = sample.nearField
+            ? 0.58f
+            : 0.72f + 0.18f * ageSpread;
+        const float sizeVariation = 0.84f + 0.24f * sizeHash;
         const float targetSizeM = std::clamp(
-            continuitySize * sizeVariation,
-            0.70f,
-            32.0f);
+            sample.widthM * physicalScale * sizeVariation,
+            0.35f,
+            10.0f);
         const float normalizedSize = std::clamp(
-            (targetSizeM - 0.50f) / 31.50f,
+            (targetSizeM - 0.30f) / 11.70f,
             0.0f,
             1.0f);
 
         const float opticalResponse = std::sqrt(
             std::max(sample.opacityStrength, 0.0f));
-        const float densityVariation = 0.78f + 0.34f * densityHash;
-        const float youngFieldScale = sample.nearField ? 0.72f : 1.0f;
-        const float oldAgeFade = 1.0f - 0.55f *
-            smoothstep(34.0f, 60.0f, sample.ageSeconds);
+        const float densityVariation = 0.72f + 0.30f * densityHash;
+        const float formationScale = sample.nearField ? 0.62f : 1.0f;
+        const float oldAgeFade = 1.0f - 0.68f *
+            smoothstep(30.0f, 62.0f, sample.ageSeconds);
         const float normalizedAlpha = std::clamp(
-            (0.10f + opticalResponse * 1.48f) *
-                densityVariation * youngFieldScale * oldAgeFade,
-            0.035f,
-            0.68f);
+            (0.018f + opticalResponse * 0.48f) *
+                densityVariation * formationScale * oldAgeFade,
+            0.012f,
+            0.30f);
 
         const float rotationSeed = unitHash(
             seed ^ 0xd6e8feb86659fd93ULL);
@@ -548,7 +698,6 @@ private:
 
     void hideInstance(std::size_t index) {
         if (index >= instances_.size() || !instances_[index]) return;
-        if (!active_[index] && createdInstanceCount_ > kInstanceCreationBatch) return;
 
         XPLMDrawInfo_t drawInfo {};
         drawInfo.structSize = sizeof(drawInfo);
@@ -569,6 +718,9 @@ private:
         for (std::size_t index = 0; index < createdInstanceCount_; ++index) {
             if (instances_[index] && active_[index]) hideInstance(index);
         }
+        renderIdToPool_.clear();
+        slotBound_.fill(false);
+        boundRenderIds_.fill(0);
         visibleInstanceCount_ = 0;
         selectedPerAsset_.fill(0);
         renderedPerAsset_.fill(0);
@@ -580,6 +732,9 @@ private:
     std::array<XPLMInstanceRef, kInstancesPerAsset> instances_ {};
     std::array<bool, kInstancesPerAsset> active_ {};
     std::array<bool, kInstancesPerAsset> usedThisFrame_ {};
+    std::array<bool, kInstancesPerAsset> slotBound_ {};
+    std::array<std::uint64_t, kInstancesPerAsset> boundRenderIds_ {};
+    std::unordered_map<std::uint64_t, std::size_t> renderIdToPool_;
     XPLMDataRef rateDataRef_ = nullptr;
     XPLMDataRef sizeDataRef_ = nullptr;
     XPLMDataRef alphaDataRef_ = nullptr;
@@ -590,6 +745,12 @@ private:
     std::size_t visibleInstanceCount_ = 0;
     std::size_t createdInstanceCount_ = 0;
     std::uint64_t poolCapacityDropCount_ = 0;
+    std::size_t ownershipReuseCount_ = 0;
+    std::size_t ownershipNewBindingCount_ = 0;
+    std::size_t ownershipReleaseCount_ = 0;
+    double maximumWakeTurnDeg_ = 0.0;
+    double maximumWakeDescentM_ = 0.0;
+    std::size_t swirlCandidateCount_ = 0;
     std::size_t deferredNonEmptyFrameCount_ = 0;
     bool running_ = false;
     bool enabled_ = true;

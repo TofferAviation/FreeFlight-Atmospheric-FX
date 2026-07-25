@@ -1,0 +1,314 @@
+name: Build Renderer Foundation v5.1 Soft Contrails
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - agent/levelup-particle-renderer-v5
+    paths:
+      - "src/ContrailParticleRenderer.h"
+      - "src/ContrailDebugPlugin.cpp"
+      - "tools/generate_particle_renderer_v5_1_assets.py"
+      - ".github/workflows/engine-v1-particle-renderer-v5-1.yml"
+  pull_request:
+    branches:
+      - engine/v1
+    paths:
+      - "src/ContrailParticleRenderer.h"
+      - "src/ContrailDebugPlugin.cpp"
+      - "tools/generate_particle_renderer_v5_1_assets.py"
+      - ".github/workflows/engine-v1-particle-renderer-v5-1.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ffatmo-renderer-v51-${{ github.event.pull_request.number || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+    env:
+      TARGET_BRANCH: ${{ github.head_ref || github.ref_name }}
+
+    steps:
+      - name: Check out particle renderer branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref || github.ref_name }}
+          fetch-depth: 0
+
+      - name: Apply Renderer Foundation v5.1 source tuning
+        shell: pwsh
+        run: |
+          @'
+          from pathlib import Path
+
+          def replace_required(text: str, old: str, new: str, label: str) -> str:
+              if new in text:
+                  print(f"{label}: already applied")
+                  return text
+              count = text.count(old)
+              if count != 1:
+                  raise RuntimeError(f"{label}: expected one match, found {count}")
+              return text.replace(old, new, 1)
+
+          renderer_path = Path("src/ContrailParticleRenderer.h")
+          renderer = renderer_path.read_text(encoding="utf-8-sig")
+          renderer = renderer.replace("v5.0.1", "v5.1")
+          renderer = renderer.replace("v5.0", "v5.1")
+          renderer = replace_required(
+              renderer,
+              "static constexpr std::size_t kVisibleCapacity = 1536;",
+              "static constexpr std::size_t kVisibleCapacity = 4096;",
+              "planner sample capacity",
+          )
+          renderer = replace_required(
+              renderer,
+              '''        const float normalizedSize = std::clamp(
+                      sample.widthM / 4.0f,
+                      0.08f,
+                      1.0f);
+                  const float normalizedAlpha = std::clamp(
+                      0.38f + sample.opacityStrength * 2.5f,
+                      0.38f,
+                      1.0f);
+          ''',
+              '''        const float normalizedSize = std::clamp(
+                      0.45f + sample.widthM / 7.0f,
+                      0.45f,
+                      1.0f);
+                  const float normalizedAlpha = std::clamp(
+                      0.58f + sample.opacityStrength * 1.8f,
+                      0.58f,
+                      0.96f);
+          ''',
+              "soft-cloud size and alpha range",
+          )
+          renderer = replace_required(
+              renderer,
+              '''        const float values[] = {
+                      1.0f,
+                      normalizedSize,
+                      normalizedAlpha,
+                      0.55f
+                  };
+          ''',
+              '''        const float values[] = {
+                      1.0f,
+                      normalizedSize,
+                      normalizedAlpha,
+                      0.72f
+                  };
+          ''',
+              "particle lifetime control",
+          )
+          if "XPLMLoadObjectAsync(" in renderer:
+              raise RuntimeError("unsafe asynchronous startup load returned")
+          if "deferredNonEmptyFrameCount_ < 3" not in renderer:
+              raise RuntimeError("safe-start gate was removed")
+          renderer_path.write_text(renderer, encoding="utf-8", newline="\n")
+
+          plugin_path = Path("src/ContrailDebugPlugin.cpp")
+          plugin = plugin_path.read_text(encoding="utf-8-sig")
+          plugin = plugin.replace("v5.0.1", "v5.1")
+          plugin = plugin.replace("V5.0.1", "V5.1")
+          plugin = plugin.replace("v5.0", "v5.1")
+          plugin = plugin.replace("V5.0", "V5.1")
+          plugin = plugin.replace("v5 point 0 point 1", "v5 point 1")
+          plugin = plugin.replace("v5 point 0", "v5 point 1")
+          plugin = replace_required(
+              plugin,
+              '''        renderPlannerSettings_.assetCapacities.fill(
+                      ContrailParticleRenderer::kInstancesPerAsset);
+          ''',
+              '''        // The particle renderer consumes only the youngest position per
+                  // engine, but the complete wake plan remains available for diagnostics
+                  // and the upcoming v5.2 ribbon-to-wake handoff.
+                  renderPlannerSettings_.assetCapacities.fill(512);
+          ''',
+              "full wake planner capacity",
+          )
+          plugin_path.write_text(plugin, encoding="utf-8", newline="\n")
+          '@ | python -
+
+      - name: Validate v5.1 source policy
+        shell: pwsh
+        run: |
+          $renderer = Get-Content src/ContrailParticleRenderer.h -Raw
+          $plugin = Get-Content src/ContrailDebugPlugin.cpp -Raw
+          if ($renderer -match 'XPLMLoadObjectAsync\(') { throw "Unsafe startup load remains" }
+          if ($renderer -notmatch 'kVisibleCapacity = 4096') { throw "v5.1 planner capacity is missing" }
+          if ($renderer -notmatch '0\.45f \+ sample\.widthM / 7\.0f') { throw "v5.1 width shaping is missing" }
+          if ($renderer -notmatch '0\.58f \+ sample\.opacityStrength \* 1\.8f') { throw "v5.1 opacity shaping is missing" }
+          if ($renderer -notmatch 'deferredNonEmptyFrameCount_ < 3') { throw "Safe-start gate is missing" }
+          if ($plugin -notmatch 'assetCapacities\.fill\(512\)') { throw "Wake planner capacities were not restored" }
+          if ($plugin -notmatch 'WORLD V5\.1 READY') { throw "v5.1 overlay label is missing" }
+
+      - name: Fetch X-Plane Plugin SDK 4.3.0
+        id: xplane_sdk
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path third_party | Out-Null
+          $archive = Join-Path $pwd "third_party/XPSDK430.zip"
+          $destination = Join-Path $pwd "third_party/xplane-sdk"
+          for ($attempt = 1; $attempt -le 5; $attempt++) {
+            try {
+              if (Test-Path $archive) { Remove-Item $archive -Force }
+              Invoke-WebRequest `
+                -Uri "https://developer.x-plane.com/wp-content/plugins/code-sample-generation/sdk_zip_files/XPSDK430.zip" `
+                -OutFile $archive `
+                -Headers @{ "User-Agent" = "FFAtmo-GitHub-Actions" }
+              if ((Get-Item $archive).Length -lt 1000000) { throw "SDK archive is unexpectedly small" }
+              break
+            } catch {
+              if ($attempt -eq 5) { throw }
+              Start-Sleep -Seconds (8 * $attempt)
+            }
+          }
+          Expand-Archive -LiteralPath $archive -DestinationPath $destination -Force
+          $header = Get-ChildItem $destination -Recurse -Filter "XPLMPlugin.h" |
+            Where-Object { $_.FullName.Replace('\', '/') -like '*/CHeaders/XPLM/XPLMPlugin.h' } |
+            Select-Object -First 1
+          if (-not $header) { throw "XPLMPlugin.h was not found" }
+          $sdkRoot = Split-Path (Split-Path (Split-Path $header.FullName -Parent) -Parent) -Parent
+          "path=$sdkRoot" >> $env:GITHUB_OUTPUT
+
+      - name: Configure v5.1 build
+        shell: pwsh
+        run: >-
+          cmake -S . -B build-particle-v51 -A x64
+          -DXPLANE_SDK="${{ steps.xplane_sdk.outputs.path }}"
+          -DFFATMO_BUILD_PLUGIN=OFF
+          -DFFATMO_BUILD_COMPANION=OFF
+          -DFFATMO_BUILD_IMGUI_PANEL=OFF
+          -DFFATMO_BUILD_GEOMETRY_DEBUG=OFF
+          -DFFATMO_BUILD_RECORDER_DEBUG=OFF
+          -DFFATMO_BUILD_CONTRAIL_DEBUG=ON
+          -DFFATMO_BUILD_REPLAY_RUNNER=OFF
+          -DFFATMO_BUILD_TESTS=ON
+          -DFFATMO_GIT_REVISION="${{ github.sha }}"
+
+      - name: Build plugin and deterministic tests
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path build-logs | Out-Null
+          & cmake --build build-particle-v51 --config Release --target FFAtmoContrailDebug ffatmo_core_tests ffatmo_acf_tests ffatmo_replay_tests ffatmo_replay_runner_tests ffatmo_contrail_tests ffatmo_live_contrail_debug_tests ffatmo_contrail_render_planner_tests *> build-logs/build.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & ctest --test-dir build-particle-v51 -C Release --output-on-failure *> build-logs/tests.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $plugin = "package/FFAtmoContrailDebug/64/win.xpl"
+          if (-not (Test-Path $plugin)) { throw "v5.1 win.xpl was not produced" }
+          if ((Get-Item $plugin).Length -lt 100000) { throw "v5.1 win.xpl is unexpectedly small" }
+
+      - name: Generate and validate v5.1 native particles
+        shell: pwsh
+        run: |
+          python tools/generate_particle_renderer_v5_1_assets.py generated-particle-assets
+          $obj = Get-Content generated-particle-assets/contrail_ribbon.obj -Raw
+          $pss = Get-Content generated-particle-assets/contrail_v5_1.pss -Raw
+          $info = Get-Content generated-particle-assets/ASSET_INFO.txt -Raw
+          if ($obj -match 'TRIS|TEXTURE_LIT') { throw "v5.1 contains legacy card geometry" }
+          if ($obj -notmatch 'PARTICLE_SYSTEM contrail_v5_1\.pss') { throw "v5.1 OBJ reference is missing" }
+          if (($pss | Select-String -Pattern 'BILLBOARD_MODE RIBBON' -AllMatches).Matches.Count -ne 1) { throw "Ribbon core is missing" }
+          if (($pss | Select-String -Pattern 'BILLBOARD_MODE BILLBOARD' -AllMatches).Matches.Count -ne 1) { throw "Cloud halo is missing" }
+          if (($pss | Select-String -Pattern 'SUB_EMITTER' -AllMatches).Matches.Count -ne 2) { throw "Expected two sub-emitters" }
+          if ($pss -notmatch 'BLEND_MODE NORMAL') { throw "Normal cloud blending is missing" }
+          if ($pss -notmatch 'EMIT_MODE STREAM') { throw "Streaming ribbon mode is missing" }
+          if ($info -notmatch 'sparse billboard cloud halo') { throw "v5.1 metadata is incomplete" }
+          @'
+          import struct
+          from pathlib import Path
+          path = Path("generated-particle-assets/contrail_particle_v51.png")
+          data = path.read_bytes()
+          width, height, bit_depth, colour_type, _, _, _ = struct.unpack(">IIBBBBB", data[16:29])
+          if (width, height) != (512, 256):
+              raise SystemExit(f"unexpected atlas dimensions: {width}x{height}")
+          if bit_depth != 8 or colour_type != 6:
+              raise SystemExit("v5.1 atlas must be 8-bit RGBA")
+          '@ | python -
+
+      - name: Commit verified v5.1 source tuning
+        shell: pwsh
+        run: |
+          if (-not (git status --porcelain -- src/ContrailParticleRenderer.h src/ContrailDebugPlugin.cpp)) {
+            Write-Host "No v5.1 source changes to commit"
+          } else {
+            git config user.name "FreeFlight Engineering Bot"
+            git config user.email "actions@users.noreply.github.com"
+            git add src/ContrailParticleRenderer.h src/ContrailDebugPlugin.cpp
+            git commit -m "Tune Renderer Foundation v5.1 soft contrails"
+            git push origin "HEAD:$env:TARGET_BRANCH"
+          }
+
+      - name: Upload build diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: FFAtmoRendererV51-build-diagnostics
+          path: build-logs
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Assemble LevelUp B738 Renderer v5.1 package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path artifact/FFAtmoContrailDebug/64 | Out-Null
+          New-Item -ItemType Directory -Force -Path artifact/FFAtmoContrailDebug/assets | Out-Null
+          Copy-Item package/FFAtmoContrailDebug/64/win.xpl artifact/FFAtmoContrailDebug/64/win.xpl -Force
+          Copy-Item generated-particle-assets/* artifact/FFAtmoContrailDebug/assets/ -Force
+          @'
+          FFAtmo LevelUp 737-800NG Renderer Foundation v5.1
+
+          PURPOSE
+          Turn the stable v5.0.1 native ribbon proof into a softer white contrail
+          without changing the safe-start path, LevelUp exhaust geometry, cooling,
+          nucleation or Wake Fluid Simulation v1.
+
+          V5.1 VISUAL CHANGES
+          - wider cool-white native ribbon core
+          - higher ambient and controlled emissive response for daylight visibility
+          - soft periodic density instead of a dark wire outline
+          - sparse billboard cloud halo around the ribbon
+          - natural halo size, opacity, lateral spread and turbulence
+          - particle lifetime extended for a cleaner continuous trail
+
+          V5.1 ENGINE AND DIAGNOSTIC CHANGES
+          - safe-start deferred OBJ loading retained
+          - render-planner capacity raised to 4096 samples
+          - per-asset planner budgets restored to 512
+          - full wake samples remain available for the future v5.2 handoff
+
+          INSTALL
+          1. Close X-Plane completely.
+          2. Delete the previous FFAtmoContrailDebug folder.
+          3. Copy this FFAtmoContrailDebug folder into Resources/plugins/.
+          4. Keep Effects Takeover v2.2 installed on the LevelUp B738.
+
+          TEST
+          1. Confirm the simulator reaches the cockpit normally.
+          2. Confirm the overlay says WORLD V5.1 READY.
+          3. Select Forced Dry Preview and fly straight for 20 seconds.
+          4. Inspect against sky and terrain from rear-quarter and front views.
+          5. Make one gentle bank and watch trail continuity.
+
+          PASS TARGET
+          - no startup crash
+          - soft white or light-grey ribbon, not a dark wire
+          - wider feathered edge with subtle cloud volume
+          - two separate near-field streams
+          - clear cooling gap behind both CFM56 engines
+          - no card segments or glowing knots
+          - zero stream breaks and renderer pool drops
+          '@ | Set-Content artifact/FFAtmoContrailDebug/README_TESTING.txt -Encoding utf8
+          "renderer=engine-v1-levelup-b738-v5.1-soft-ribbon-halo" | Set-Content artifact/FFAtmoContrailDebug/BUILD_INFO.txt -Encoding utf8
+          "git_revision=${{ github.sha }}" | Add-Content artifact/FFAtmoContrailDebug/BUILD_INFO.txt -Encoding utf8
+
+      - name: Upload v5.1 test plugin
+        uses: actions/upload-artifact@v4
+        with:
+          name: FFAtmoContrailDebug-v5.1-win64
+          path: artifact/FFAtmoContrailDebug
+          if-no-files-found: error
+          retention-days: 14

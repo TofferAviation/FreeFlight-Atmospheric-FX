@@ -9,6 +9,7 @@ on:
       - "src/ContrailParticleRenderer.h"
       - "src/ContrailDebugPlugin.cpp"
       - "tools/generate_particle_renderer_v5_4_1_assets.py"
+      - "tools/patch_v5_4_1_runtime.py"
       - ".github/workflows/engine-v1-particle-renderer-v5-4-1.yml"
   pull_request:
     branches:
@@ -17,6 +18,7 @@ on:
       - "src/ContrailParticleRenderer.h"
       - "src/ContrailDebugPlugin.cpp"
       - "tools/generate_particle_renderer_v5_4_1_assets.py"
+      - "tools/patch_v5_4_1_runtime.py"
       - ".github/workflows/engine-v1-particle-renderer-v5-4-1.yml"
 
 permissions:
@@ -39,51 +41,8 @@ jobs:
       - name: Apply v5.4.1 runtime labels and diagnostics
         shell: pwsh
         run: |
-          $path = "src/ContrailDebugPlugin.cpp"
-          $text = Get-Content $path -Raw
-          $text = $text.Replace("v5.2", "v5.4.1")
-          $text = $text.Replace("V5.2", "V5.4.1")
-          $text = $text.Replace("v5 point 2", "v5 point 4 point 1")
-
-          $oldCounts = @'
-               << "world_renderer_pool_capacity_drop_count="
-               << worldRenderer_.poolCapacityDropCount() << '\n'
-               << "simulation_enabled="
-          '@
-          $newCounts = @'
-               << "world_renderer_pool_capacity_drop_count="
-               << worldRenderer_.poolCapacityDropCount() << '\n'
-               << "world_renderer_ownership_reuse_count="
-               << worldRenderer_.ownershipReuseCount() << '\n'
-               << "world_renderer_ownership_new_binding_count="
-               << worldRenderer_.ownershipNewBindingCount() << '\n'
-               << "world_renderer_ownership_release_count="
-               << worldRenderer_.ownershipReleaseCount() << '\n'
-               << "world_renderer_swirl_candidate_count="
-               << worldRenderer_.swirlCandidateCount() << '\n'
-               << "simulation_enabled="
-          '@
-          if (-not $text.Contains($oldCounts)) { throw "Renderer ownership report insertion point was not found" }
-          $text = $text.Replace($oldCounts, $newCounts)
-
-          $oldMotion = @'
-               << "maximum_length_compression_ratio="
-               << worldRenderer_.maximumLengthCompressionRatio() << '\n'
-               << std::hex << std::setfill('0')
-          '@
-          $newMotion = @'
-               << "maximum_length_compression_ratio="
-               << worldRenderer_.maximumLengthCompressionRatio() << '\n'
-               << "world_renderer_maximum_wake_turn_deg="
-               << worldRenderer_.maximumWakeTurnDeg() << '\n'
-               << "world_renderer_maximum_wake_descent_m="
-               << worldRenderer_.maximumWakeDescentM() << '\n'
-               << std::hex << std::setfill('0')
-          '@
-          if (-not $text.Contains($oldMotion)) { throw "Swirl diagnostics report insertion point was not found" }
-          $text = $text.Replace($oldMotion, $newMotion)
-          Set-Content $path $text -Encoding utf8 -NoNewline
-
+          python tools/patch_v5_4_1_runtime.py
+          $text = Get-Content src/ContrailDebugPlugin.cpp -Raw
           $renderer = Get-Content src/ContrailParticleRenderer.h -Raw
           if ($renderer -match 'XPLMLoadObjectAsync\(') { throw "Unsafe async loader returned" }
           if ($renderer -notmatch 'deferredNonEmptyFrameCount_ < 3') { throw "Safe-start gate is missing" }
@@ -97,6 +56,8 @@ jobs:
           if ($renderer -notmatch '0\.30f\);') { throw "Low-opacity cap is missing" }
           if ($renderer -match 'BILLBOARD_MODE RIBBON') { throw "Ribbon mode returned in renderer source" }
           if ($text -notmatch 'WORLD V5\.4\.1 READY') { throw "v5.4.1 overlay label is missing" }
+          if ($text -notmatch 'world_renderer_ownership_reuse_count') { throw "Ownership report fields are missing" }
+          if ($text -notmatch 'world_renderer_maximum_wake_turn_deg') { throw "Swirl report fields are missing" }
 
       - name: Fetch X-Plane Plugin SDK 4.3.0
         id: sdk

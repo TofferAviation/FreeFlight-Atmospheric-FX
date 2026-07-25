@@ -28,8 +28,8 @@ public:
     static constexpr std::size_t kOpacityBucketCount = render::kContrailOpacityBucketCount;
     static constexpr std::size_t kTextureVariantCount = render::kContrailTextureVariantCount;
     static constexpr std::size_t kAssetCount = render::kContrailRenderAssetCount;
-    static constexpr std::size_t kInstancesPerAsset = 192;
-    static constexpr std::size_t kVisibleCapacity = 1024;
+    static constexpr std::size_t kInstancesPerAsset = 256;
+    static constexpr std::size_t kVisibleCapacity = 1536;
 
     ContrailWorldRenderer() {
         for (std::size_t index = 0; index < loadContexts_.size(); ++index) {
@@ -63,7 +63,7 @@ public:
         illuminationDataRef_ = registerScaleDataRef(
             "ffatmo/contrail_debug/illumination", readIllumination);
         if (!widthDataRef_ || !lengthDataRef_ || !illuminationDataRef_) {
-            log("Could not register the v4.7 width/length/illumination instance datarefs.\n");
+            log("Could not register the v4.8 width/length/illumination instance datarefs.\n");
             stop();
             return false;
         }
@@ -77,7 +77,7 @@ public:
                     ("contrail_core_" + std::to_string(bucket) + "_" +
                      std::string(1, variantName) + ".obj");
                 if (!std::filesystem::exists(objectPath)) {
-                    log("Missing v4.7 asset: " + objectPath.string() + "\n");
+                    log("Missing v4.8 asset: " + objectPath.string() + "\n");
                     stop();
                     return false;
                 }
@@ -322,7 +322,7 @@ private:
 
     void objectLoaded(std::size_t assetIndex, XPLMObjectRef object) {
         if (!object) {
-            log("X-Plane could not load v4.7 asset " + std::to_string(assetIndex) + ".\n");
+            log("X-Plane could not load v4.8 asset " + std::to_string(assetIndex) + ".\n");
             return;
         }
         if (!running_ || assetIndex >= pools_.size()) {
@@ -348,12 +348,12 @@ private:
             hideInstance(instance, index + assetIndex * kInstancesPerAsset);
         }
         if (pool.slots.empty()) {
-            log("No instances could be created for v4.7 asset " +
+            log("No instances could be created for v4.8 asset " +
                 std::to_string(assetIndex) + ".\n");
             return;
         }
         ++loadedObjectCount_;
-        log("Loaded v4.7 asset " + std::to_string(assetIndex) + " with " +
+        log("Loaded v4.8 asset " + std::to_string(assetIndex) + " with " +
             std::to_string(pool.slots.size()) + " persistent slots.\n");
     }
 

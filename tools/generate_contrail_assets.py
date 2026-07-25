@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate deterministic Renderer Foundation v4.7 lit-alpha composite assets."""
+"""Generate deterministic Renderer Foundation v4.8 daylight-cloud composite assets."""
 
 from __future__ import annotations
 
@@ -13,10 +13,10 @@ from pathlib import Path
 WIDTH = 256
 HEIGHT = 256
 SIDE_BORDER_FRACTION = 0.08
-END_BORDER_PIXELS = 1
-ALPHA_LEVELS = (0.028, 0.045, 0.070, 0.100)
+END_BORDER_PIXELS = 0
+ALPHA_LEVELS = (0.140, 0.200, 0.280, 0.380)
 VARIANTS = ("a", "b")
-LIT_BRIGHTNESS_NITS = 85
+LIT_BRIGHTNESS_NITS = 2500
 
 
 def png_chunk(kind: bytes, payload: bytes) -> bytes:
@@ -106,13 +106,21 @@ def make_textures(maximum_alpha: float, seed: int) -> tuple[bytes, bytes]:
 
             cloud_detail = 0.0
             for lx, ly, sigma, weight in cloud_lobes:
-                cloud_detail += weight * gaussian((px - lx) ** 2 + (py - ly) ** 2, sigma)
+                longitudinal_distance = abs(py - ly)
+                wrapped_longitudinal_distance = min(
+                    longitudinal_distance, 2.0 - longitudinal_distance
+                )
+                cloud_detail += weight * gaussian(
+                    (px - lx) ** 2 + wrapped_longitudinal_distance ** 2,
+                    sigma,
+                )
             cloud_detail = min(cloud_detail / 2.5, 1.0)
 
+            longitudinal_phase = math.pi * (py + 1.0)
             longitudinal = (
                 0.93
-                + 0.045 * math.sin(py * 7.1 + centre_phase)
-                + 0.025 * math.sin(py * 15.2 + edge_phase)
+                + 0.045 * math.sin(longitudinal_phase * 3.0 + centre_phase)
+                + 0.025 * math.sin(longitudinal_phase * 7.0 + edge_phase)
             )
             density = (
                 end_envelope
@@ -317,7 +325,7 @@ def main() -> int:
             generated.extend((texture_name, lit_texture_name, object_name))
 
     (args.output / "ASSET_INFO.txt").write_text(
-        "FFAtmo Renderer Foundation v4.7 deterministic lit-alpha single-layer composite asset set.\n"
+        "FFAtmo Renderer Foundation v4.8 deterministic lit-alpha single-layer composite asset set.\n"
         "The RGBA albedo texture alone controls transparency.\n"
         "A separate RGB-only LIT density map has no alpha channel and cannot make cards opaque.\n"
         f"A constant {LIT_BRIGHTNESS_NITS}-nit light-level proxy prevents black sun-facing/shaded cards.\n"

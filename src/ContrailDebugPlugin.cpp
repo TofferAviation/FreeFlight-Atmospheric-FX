@@ -71,7 +71,7 @@ public:
         reportPath_ = pluginRoot_ / "reports" / "contrail_visual_debug.txt";
         profileService_ = std::make_unique<acf::AcfProfileService>();
         createCommandsAndMenu();
-        log("Started. Renderer Foundation v4.5 uses atmosphere-conditioned "
+        log("Started. Renderer Foundation v4.8 uses atmosphere-conditioned "
             "cooling and nucleation with continuity-first trail planning.\n");
         return true;
     }
@@ -86,7 +86,7 @@ public:
             return false;
         }
         if (!worldRenderer_.start(pluginRoot_ / "assets")) {
-            log("Could not start Renderer Foundation v4.5. Check the eight assets folder.\n");
+            log("Could not start Renderer Foundation v4.8. Check the eight assets folder.\n");
             overlay_.stop();
             return false;
         }
@@ -320,10 +320,10 @@ private:
         geometryStatus_ = "ACF EXHAUSTS: " +
             std::to_string(engineExhaustBodyOffsets_.size());
         if (b738Profile) geometryStatus_ += " | B738 WAKE";
-        log("Renderer v4.5 exhaust and wake geometry ready for " +
+        log("Renderer v4.8 exhaust and wake geometry ready for " +
             result->profile.aircraftName + ": " +
             std::to_string(engineExhaustBodyOffsets_.size()) + " engines.\n");
-        XPLMSpeakString("FF Atmo Renderer v4 point 5 geometry ready");
+        XPLMSpeakString("FF Atmo Renderer v4 point 8 geometry ready");
     }
 
     bool applyAtmosphereMode(engine::SimulatorSnapshot& snapshot,
@@ -506,7 +506,7 @@ private:
         status.mode = modeName(atmosphereMode_);
         status.geometryStatus = geometryStatus_;
         status.rendererStatus = worldRenderer_.ready() ?
-            "WORLD V4.5 READY" : "LOADING V4.5 ASSETS";
+            "WORLD V4.8 READY" : "LOADING V4.8 ASSETS";
         status.activeParcels = liveEngine_.parcels().size();
         status.emittedParcels = liveEngine_.summary().emittedParcelCount;
         status.expiredParcels = liveEngine_.summary().expiredParcelCount;
@@ -534,7 +534,7 @@ private:
 
         const auto& summary = liveEngine_.summary();
         const auto& planner = latestRenderPlan_.statistics;
-        stream << "FFAtmo World Contrail Visual Debug Report v4.5\n"
+        stream << "FFAtmo World Contrail Visual Debug Report v4.8\n"
                << "status=" << (summary.ok ? "OK" : "ERROR") << '\n'
                << "error=" << summary.error << '\n'
                << "aircraft_name=" << snapshotSource_.aircraftName() << '\n'
@@ -631,8 +631,8 @@ private:
                << "deterministic_hash=0x" << std::setw(16)
                << summary.deterministicHash << '\n';
 
-        log("Renderer v4.5 report written to: " + reportPath_.string() + "\n");
-        XPLMSpeakString("FF Atmo Renderer v4 point 5 report exported");
+        log("Renderer v4.8 report written to: " + reportPath_.string() + "\n");
+        XPLMSpeakString("FF Atmo Renderer v4 point 8 report exported");
     }
 
     void cycleAtmosphereMode() {
@@ -719,7 +719,7 @@ private:
             self->visualEnabled_ = !self->visualEnabled_;
             self->overlay_.setEnabled(self->visualEnabled_);
             self->worldRenderer_.setEnabled(self->visualEnabled_);
-            log(std::string("Renderer v4.5 visuals ") +
+            log(std::string("Renderer v4.8 visuals ") +
                 (self->visualEnabled_ ? "enabled.\n" : "disabled.\n"));
         } else if (command == self->toggleSimulationCommand_) {
             self->simulationEnabled_ = !self->simulationEnabled_;
@@ -743,7 +743,7 @@ private:
     void createCommandsAndMenu() {
         toggleOverlayCommand_ = XPLMCreateCommand(
             "ffatmo_contrail_debug/toggle_overlay",
-            "Toggle FFAtmo Renderer v4.5 visuals and status overlay");
+            "Toggle FFAtmo Renderer v4.8 visuals and status overlay");
         toggleSimulationCommand_ = XPLMCreateCommand(
             "ffatmo_contrail_debug/toggle_simulation",
             "Enable or disable live contrail physics");
@@ -779,7 +779,7 @@ private:
             nullptr,
             nullptr);
         XPLMAppendMenuItemWithCommand(
-            menu_, "Renderer v4.5 Visuals + Status: ON / OFF", toggleOverlayCommand_);
+            menu_, "Renderer v4.8 Visuals + Status: ON / OFF", toggleOverlayCommand_);
         XPLMAppendMenuItemWithCommand(
             menu_, "Simulation: ON / OFF", toggleSimulationCommand_);
         XPLMAppendMenuItemWithCommand(
@@ -866,7 +866,7 @@ PLUGIN_API int XPluginStart(char* outName,
         outDescription,
         256,
         "%s",
-        "Renderer Foundation v4.5 with B738 cooling, nucleation and wake-fluid trails");
+        "Renderer Foundation v4.8 with B738 cooling, nucleation and wake-fluid trails");
     return ffatmo::gRuntime.start() ? 1 : 0;
 }
 

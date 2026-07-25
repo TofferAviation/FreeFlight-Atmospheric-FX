@@ -9,12 +9,19 @@ on:
       - "tools/apply_renderer_v5_2_source_patch.py"
       - "tools/generate_particle_renderer_v5_2_assets.py"
       - ".github/workflows/engine-v1-particle-renderer-v5-2-package.yml"
+  pull_request:
+    branches:
+      - engine/v1
+    paths:
+      - "tools/apply_renderer_v5_2_source_patch.py"
+      - "tools/generate_particle_renderer_v5_2_assets.py"
+      - ".github/workflows/engine-v1-particle-renderer-v5-2-package.yml"
 
 permissions:
   contents: read
 
 concurrency:
-  group: ffatmo-renderer-v52-package
+  group: ffatmo-renderer-v52-package-${{ github.event.pull_request.number || github.ref_name }}
   cancel-in-progress: true
 
 jobs:

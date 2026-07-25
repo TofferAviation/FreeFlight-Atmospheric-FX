@@ -28,8 +28,8 @@ public:
     static constexpr std::size_t kOpacityBucketCount = render::kContrailOpacityBucketCount;
     static constexpr std::size_t kTextureVariantCount = render::kContrailTextureVariantCount;
     static constexpr std::size_t kAssetCount = render::kContrailRenderAssetCount;
-    static constexpr std::size_t kInstancesPerAsset = 192;
-    static constexpr std::size_t kVisibleCapacity = 1024;
+    static constexpr std::size_t kInstancesPerAsset = 256;
+    static constexpr std::size_t kVisibleCapacity = 1536;
 
     ContrailWorldRenderer() {
         for (std::size_t index = 0; index < loadContexts_.size(); ++index) {
@@ -60,8 +60,10 @@ public:
             "ffatmo/contrail_debug/width", readWidth);
         lengthDataRef_ = registerScaleDataRef(
             "ffatmo/contrail_debug/length", readLength);
-        if (!widthDataRef_ || !lengthDataRef_) {
-            log("Could not register the v4.2 width/length instance datarefs.\n");
+        illuminationDataRef_ = registerScaleDataRef(
+            "ffatmo/contrail_debug/illumination", readIllumination);
+        if (!widthDataRef_ || !lengthDataRef_ || !illuminationDataRef_) {
+            log("Could not register the v4.8 width/length/illumination instance datarefs.\n");
             stop();
             return false;
         }
@@ -75,7 +77,7 @@ public:
                     ("contrail_core_" + std::to_string(bucket) + "_" +
                      std::string(1, variantName) + ".obj");
                 if (!std::filesystem::exists(objectPath)) {
-                    log("Missing v4.2 asset: " + objectPath.string() + "\n");
+                    log("Missing v4.8 asset: " + objectPath.string() + "\n");
                     stop();
                     return false;
                 }
@@ -109,6 +111,10 @@ public:
         if (lengthDataRef_) {
             XPLMUnregisterDataAccessor(lengthDataRef_);
             lengthDataRef_ = nullptr;
+        }
+        if (illuminationDataRef_) {
+            XPLMUnregisterDataAccessor(illuminationDataRef_);
+            illuminationDataRef_ = nullptr;
         }
     }
 
@@ -290,6 +296,7 @@ private:
 
     static float readWidth(void*) { return 1.0f; }
     static float readLength(void*) { return 1.0f; }
+    static float readIllumination(void*) { return 1.0f; }
 
     static bool finiteSample(const render::ContrailRenderSample& sample) {
         return std::isfinite(sample.localPositionM.x) &&
@@ -315,7 +322,7 @@ private:
 
     void objectLoaded(std::size_t assetIndex, XPLMObjectRef object) {
         if (!object) {
-            log("X-Plane could not load v4.2 asset " + std::to_string(assetIndex) + ".\n");
+            log("X-Plane could not load v4.8 asset " + std::to_string(assetIndex) + ".\n");
             return;
         }
         if (!running_ || assetIndex >= pools_.size()) {
@@ -328,6 +335,7 @@ private:
         const char* datarefs[] = {
             "ffatmo/contrail_debug/width",
             "ffatmo/contrail_debug/length",
+            "ffatmo/contrail_debug/illumination",
             nullptr
         };
         pool.slots.reserve(kInstancesPerAsset);
@@ -340,12 +348,12 @@ private:
             hideInstance(instance, index + assetIndex * kInstancesPerAsset);
         }
         if (pool.slots.empty()) {
-            log("No instances could be created for v4.2 asset " +
+            log("No instances could be created for v4.8 asset " +
                 std::to_string(assetIndex) + ".\n");
             return;
         }
         ++loadedObjectCount_;
-        log("Loaded v4.2 asset " + std::to_string(assetIndex) + " with " +
+        log("Loaded v4.8 asset " + std::to_string(assetIndex) + " with " +
             std::to_string(pool.slots.size()) + " persistent slots.\n");
     }
 
@@ -408,7 +416,8 @@ private:
         drawInfo.roll = angles.rollDeg;
         float data[] = {
             std::clamp(sample.widthM, 0.30f, 24.0f),
-            effectiveLength
+            effectiveLength,
+            1.0f
         };
         XPLMInstanceSetPosition(instance, &drawInfo, data);
     }
@@ -420,7 +429,7 @@ private:
         drawInfo.x = -250000.0f - static_cast<float>(ordinal);
         drawInfo.y = -250000.0f;
         drawInfo.z = -250000.0f;
-        float data[] = {0.001f, 0.001f};
+        float data[] = {0.001f, 0.001f, 0.0f};
         XPLMInstanceSetPosition(instance, &drawInfo, data);
     }
 
@@ -428,6 +437,7 @@ private:
     std::array<LoadContext, kAssetCount> loadContexts_;
     XPLMDataRef widthDataRef_ = nullptr;
     XPLMDataRef lengthDataRef_ = nullptr;
+    XPLMDataRef illuminationDataRef_ = nullptr;
     std::filesystem::path assetDirectory_;
     std::array<std::size_t, kAssetCount> selectedPerAsset_ {};
     std::array<std::size_t, kAssetCount> renderedPerAsset_ {};

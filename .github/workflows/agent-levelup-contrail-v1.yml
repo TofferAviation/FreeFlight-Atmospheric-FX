@@ -1,0 +1,220 @@
+name: Apply LevelUp Contrail Vertical Slice V1
+
+on:
+  push:
+    branches:
+      - agent/levelup-contrail-v1
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  implement-and-test:
+    if: ${{ !contains(github.event.head_commit.message || '', '[levelup-v1-applied]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out implementation branch
+        uses: actions/checkout@v4
+        with:
+          ref: agent/levelup-contrail-v1
+          fetch-depth: 0
+
+      - name: Apply condensation handoff and B738 calibration
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_exact(path, old, new, expected=1):
+              p = Path(path)
+              text = p.read_text(encoding='utf-8')
+              count = text.count(old)
+              if count != expected:
+                  raise SystemExit(f'{path}: expected {expected} matches, found {count}')
+              p.write_text(text.replace(old, new), encoding='utf-8')
+
+          Path('src/engine/ContrailCondensationModel.h').write_text(r'''#pragma once
+
+#include <algorithm>
+
+namespace ffatmo::engine {
+
+struct ContrailCondensationHandoff {
+    float visibleStartSeconds = 0.12f;
+    float fullOpacitySeconds = 0.60f;
+};
+
+// Compact live visual model for the exhaust cooling and ice-nucleation handoff.
+// It is deliberately bounded and deterministic: colder, more ice-saturated air
+// forms sooner, while warmer/drier air and a hotter exhaust plume delay the
+// first visible crystals and lengthen the opacity ramp.
+inline ContrailCondensationHandoff calculateContrailCondensationHandoff(
+    float ambientTemperatureK,
+    float relativeHumidityIcePercent,
+    float staticPressurePa,
+    float exhaustVelocityMps,
+    float fuelFlowKgps,
+    float trueAirspeedMps) {
+    const float coldFactor = std::clamp(
+        (241.15f - ambientTemperatureK) / 18.0f, 0.0f, 1.0f);
+    const float warmFactor = 1.0f - coldFactor;
+    const float dryness = std::clamp(
+        (100.0f - relativeHumidityIcePercent) / 80.0f, 0.0f, 1.0f);
+    const float exhaustHeat = std::clamp(
+        (exhaustVelocityMps - 250.0f) / 300.0f, 0.0f, 1.0f);
+    const float fuelHeat = std::clamp(
+        (fuelFlowKgps - 0.50f) / 1.50f, 0.0f, 1.0f);
+    const float pressureFactor = std::clamp(
+        (staticPressurePa - 20000.0f) / 40000.0f, 0.0f, 1.0f);
+    const float speedMixing = std::clamp(
+        (trueAirspeedMps - 100.0f) / 180.0f, 0.0f, 1.0f);
+
+    ContrailCondensationHandoff result;
+    result.visibleStartSeconds = std::clamp(
+        0.06f +
+        0.18f * warmFactor +
+        0.10f * dryness +
+        0.035f * exhaustHeat +
+        0.020f * fuelHeat +
+        0.030f * pressureFactor -
+        0.020f * speedMixing,
+        0.08f,
+        0.38f);
+
+    const float rampDuration = std::clamp(
+        0.24f +
+        0.28f * dryness +
+        0.18f * warmFactor +
+        0.055f * exhaustHeat +
+        0.035f * fuelHeat,
+        0.22f,
+        0.78f);
+    result.fullOpacitySeconds = std::clamp(
+        result.visibleStartSeconds + rampDuration,
+        result.visibleStartSeconds + 0.20f,
+        1.10f);
+    return result;
+}
+
+}  // namespace ffatmo::engine
+''', encoding='utf-8')
+
+          replace_exact(
+              'src/engine/ContrailSimulation.h',
+              '''    float sourceTemperatureK = 0.0f;\n    float sourceRelativeHumidityIcePercent = 0.0f;\n\n    // Live-renderer wake state.''',
+              '''    float sourceTemperatureK = 0.0f;\n    float sourceRelativeHumidityIcePercent = 0.0f;\n    float condensationStartSeconds = 0.12f;\n    float condensationFullSeconds = 0.60f;\n\n    // Live-renderer wake state.''')
+
+          replace_exact(
+              'src/render/ContrailRenderPlanner.h',
+              '''    float normalizedIceMass = 0.0f;\n    float ageSeconds = 0.0f;\n    bool syntheticHead = false;''',
+              '''    float normalizedIceMass = 0.0f;\n    float ageSeconds = 0.0f;\n    float condensationStartSeconds = -1.0f;\n    float condensationFullSeconds = -1.0f;\n    bool syntheticHead = false;''')
+          replace_exact(
+              'src/render/ContrailRenderPlanner.h',
+              '''    float heatHandoffStartSeconds = 0.02f;\n    float heatHandoffFullSeconds = 0.80f;''',
+              '''    float heatHandoffStartSeconds = 0.10f;\n    float heatHandoffFullSeconds = 0.60f;''')
+
+          replace_exact(
+              'src/render/ContrailRenderPlanner.cpp',
+              '''           finite(input.opticalDepth) && finite(input.normalizedIceMass) &&\n           finite(input.ageSeconds) && input.physicsRadiusM > 0.0f &&''',
+              '''           finite(input.opticalDepth) && finite(input.normalizedIceMass) &&\n           finite(input.ageSeconds) && finite(input.condensationStartSeconds) &&\n           finite(input.condensationFullSeconds) && input.physicsRadiusM > 0.0f &&''')
+          replace_exact(
+              'src/render/ContrailRenderPlanner.cpp',
+              '''    const float heatHandoff = smoothstep(\n        settings.heatHandoffStartSeconds,\n        settings.heatHandoffFullSeconds,\n        age);''',
+              '''    const float firstStart = first.condensationStartSeconds >= 0.0f\n        ? first.condensationStartSeconds\n        : settings.heatHandoffStartSeconds;\n    const float secondStart = second.condensationStartSeconds >= 0.0f\n        ? second.condensationStartSeconds\n        : settings.heatHandoffStartSeconds;\n    const float firstFull = first.condensationFullSeconds >= firstStart\n        ? first.condensationFullSeconds\n        : settings.heatHandoffFullSeconds;\n    const float secondFull = second.condensationFullSeconds >= secondStart\n        ? second.condensationFullSeconds\n        : settings.heatHandoffFullSeconds;\n    const float condensationStart = mix(firstStart, secondStart, ratio);\n    const float condensationFull = std::max(\n        condensationStart + 0.05f, mix(firstFull, secondFull, ratio));\n    const float heatHandoff = smoothstep(\n        condensationStart, condensationFull, age);''')
+
+          replace_exact(
+              'src/engine/LiveContrailEngine.cpp',
+              '#include "engine/LiveContrailEngine.h"\n',
+              '#include "engine/LiveContrailEngine.h"\n#include "engine/ContrailCondensationModel.h"\n')
+          replace_exact(
+              'src/engine/LiveContrailEngine.cpp',
+              '''                parcel.sourceRelativeHumidityIcePercent =\n                    normalized.relativeHumidityIcePercent;\n\n                const Vec3d wakeRight = rotateBodyOffsetToEnu(''',
+              '''                parcel.sourceRelativeHumidityIcePercent =\n                    normalized.relativeHumidityIcePercent;\n                const auto condensation = calculateContrailCondensationHandoff(\n                    normalized.temperatureK,\n                    normalized.relativeHumidityIcePercent,\n                    snapshot.atmosphere.staticPressurePa,\n                    snapshot.engines[engineIndex].exhaustVelocityMps,\n                    snapshot.engines[engineIndex].fuelFlowKgps,\n                    snapshot.trueAirspeedMps > 1.0f\n                        ? snapshot.trueAirspeedMps\n                        : normalized.trueAirspeedMps);\n                parcel.condensationStartSeconds = condensation.visibleStartSeconds;\n                parcel.condensationFullSeconds = condensation.fullOpacitySeconds;\n\n                const Vec3d wakeRight = rotateBodyOffsetToEnu(''')
+
+          replace_exact(
+              'src/ContrailDebugPlugin.cpp',
+              '''        renderPlannerSettings_.heatHandoffStartSeconds = 0.02f;\n        renderPlannerSettings_.heatHandoffFullSeconds = 0.80f;''',
+              '''        renderPlannerSettings_.heatHandoffStartSeconds = 0.10f;\n        renderPlannerSettings_.heatHandoffFullSeconds = 0.60f;''')
+          replace_exact(
+              'src/ContrailDebugPlugin.cpp',
+              '''            item.normalizedIceMass = parcel.normalizedIceMass;\n            item.ageSeconds = parcel.ageSeconds;\n            inputs.push_back(item);''',
+              '''            item.normalizedIceMass = parcel.normalizedIceMass;\n            item.ageSeconds = parcel.ageSeconds;\n            item.condensationStartSeconds = parcel.condensationStartSeconds;\n            item.condensationFullSeconds = parcel.condensationFullSeconds;\n            inputs.push_back(item);''')
+          replace_exact(
+              'src/ContrailDebugPlugin.cpp',
+              '''            render::ContrailRenderInput head;\n            head.sourceParcelId = kSyntheticHeadIdBase + engineIndex;\n            head.engineIndex = static_cast<std::uint32_t>(engineIndex);\n            head.localPositionM = {\n                exhausts[engineIndex].x -\n                    static_cast<double>(snapshot.linearVelocityLocalMps.x) * kHeatBlurHandoffSeconds,\n                exhausts[engineIndex].y -\n                    static_cast<double>(snapshot.linearVelocityLocalMps.y) * kHeatBlurHandoffSeconds,\n                exhausts[engineIndex].z -\n                    static_cast<double>(snapshot.linearVelocityLocalMps.z) * kHeatBlurHandoffSeconds\n            };\n            head.physicsRadiusM = 0.25f;\n            head.opticalDepth = std::max(parcel->opticalDepth * 0.80f, 0.05f);\n            head.normalizedIceMass = parcel->normalizedIceMass;\n            head.ageSeconds = 0.0f;\n            head.syntheticHead = true;\n            inputs.push_back(head);''',
+              '''            const float handoffSeconds = std::clamp(\n                parcel->condensationStartSeconds > 0.0f\n                    ? parcel->condensationStartSeconds\n                    : kHeatBlurHandoffSeconds,\n                0.05f,\n                0.45f);\n            render::ContrailRenderInput head;\n            head.sourceParcelId = kSyntheticHeadIdBase + engineIndex;\n            head.engineIndex = static_cast<std::uint32_t>(engineIndex);\n            head.localPositionM = {\n                exhausts[engineIndex].x -\n                    static_cast<double>(snapshot.linearVelocityLocalMps.x) * handoffSeconds,\n                exhausts[engineIndex].y -\n                    static_cast<double>(snapshot.linearVelocityLocalMps.y) * handoffSeconds,\n                exhausts[engineIndex].z -\n                    static_cast<double>(snapshot.linearVelocityLocalMps.z) * handoffSeconds\n            };\n            head.physicsRadiusM = 0.25f;\n            head.opticalDepth = std::max(parcel->opticalDepth * 0.80f, 0.05f);\n            head.normalizedIceMass = parcel->normalizedIceMass;\n            head.ageSeconds = handoffSeconds;\n            head.condensationStartSeconds = handoffSeconds;\n            head.condensationFullSeconds = std::max(\n                parcel->condensationFullSeconds, handoffSeconds + 0.20f);\n            head.syntheticHead = true;\n            inputs.push_back(head);''')
+
+          replace_exact(
+              'src/ContrailDebugPlugin.cpp',
+              '''        if (!result->ok || result->profile.engines.empty()) {\n            geometryReady_ = false;\n            geometryStatus_ = "ACF FALLBACK OFFSETS";\n            log("ACF geometry unavailable; using symmetric fallback exhaust offsets.\\n");\n            return;\n        }''',
+              '''        if (!result->ok || result->profile.engines.empty()) {\n            geometryReady_ = false;\n            geometryStatus_ = "ACF FALLBACK OFFSETS";\n            if (snapshotSource_.aircraftIcao() == "B738") {\n                liveEngine_.setWakeAircraftGeometry(35.8f, 65000.0f);\n                geometryStatus_ += " | B738 WAKE FALLBACK";\n            }\n            log("ACF geometry unavailable; using symmetric fallback exhaust offsets.\\n");\n            return;\n        }''')
+          replace_exact(
+              'src/ContrailDebugPlugin.cpp',
+              '''        liveEngine_.setEngineExhaustBodyOffsets(engineExhaustBodyOffsets_);\n        liveEngine_.reset();''',
+              '''        liveEngine_.setEngineExhaustBodyOffsets(engineExhaustBodyOffsets_);\n\n        float wakeWingspanM = 0.0f;\n        if (result->profile.hasLeftWingtip && result->profile.hasRightWingtip) {\n            const double dx = result->profile.rightWingtipBodyM.x -\n                              result->profile.leftWingtipBodyM.x;\n            const double dy = result->profile.rightWingtipBodyM.y -\n                              result->profile.leftWingtipBodyM.y;\n            const double dz = result->profile.rightWingtipBodyM.z -\n                              result->profile.leftWingtipBodyM.z;\n            wakeWingspanM = static_cast<float>(std::sqrt(dx * dx + dy * dy + dz * dz));\n        }\n        float wakeReferenceMassKg = static_cast<float>(\n            result->profile.maximumMassKg > 10000.0\n                ? result->profile.maximumMassKg\n                : result->profile.emptyMassKg * 1.35);\n        const bool b738Profile = result->profile.aircraftIcao == "B738" ||\n                                 snapshotSource_.aircraftIcao() == "B738";\n        if (b738Profile && wakeWingspanM < 20.0f) wakeWingspanM = 35.8f;\n        if (b738Profile && wakeReferenceMassKg < 10000.0f) wakeReferenceMassKg = 65000.0f;\n        liveEngine_.setWakeAircraftGeometry(wakeWingspanM, wakeReferenceMassKg);\n        liveEngine_.reset();''')
+
+          replace_exact(
+              'tests/ContrailRenderPlannerTests.cpp',
+              '''    input.normalizedIceMass = 0.20f;\n    input.ageSeconds = age;\n    input.syntheticHead = syntheticHead;''',
+              '''    input.normalizedIceMass = 0.20f;\n    input.ageSeconds = age;\n    input.condensationStartSeconds = 0.12f;\n    input.condensationFullSeconds = 0.60f;\n    input.syntheticHead = syntheticHead;''')
+          replace_exact(
+              'tests/ContrailRenderPlannerTests.cpp',
+              '''    require(first.statistics.coreBucketClampCount == 0,\n            "composite planning does not use the legacy core bucket clamp");\n\n    std::unordered_set<std::uint64_t> renderIds;''',
+              '''    require(first.statistics.coreBucketClampCount == 0,\n            "composite planning does not use the legacy core bucket clamp");\n\n    auto hiddenYoung = makeInput(9000, 0, 0.0, 1000.0, -5.0, 0.08f, 0.30f);\n    hiddenYoung.condensationStartSeconds = 0.20f;\n    hiddenYoung.condensationFullSeconds = 0.60f;\n    auto hiddenHead = makeInput(9001, 0, 0.0, 1000.0, 0.0, 0.02f, 0.30f, true);\n    hiddenHead.condensationStartSeconds = 0.20f;\n    hiddenHead.condensationFullSeconds = 0.60f;\n    const auto hiddenPlan = render::planContrailRenderSamples(\n        {hiddenYoung, hiddenHead}, settings);\n    require(hiddenPlan.samples.empty(),\n            "cooling-zone samples remain invisible before nucleation starts");\n\n    auto rampOlder = makeInput(9010, 0, 0.0, 1000.0, -80.0, 0.50f, 0.30f);\n    rampOlder.condensationStartSeconds = 0.20f;\n    rampOlder.condensationFullSeconds = 0.60f;\n    auto rampYounger = makeInput(9011, 0, 0.0, 1000.0, -45.0, 0.28f, 0.30f, true);\n    rampYounger.condensationStartSeconds = 0.20f;\n    rampYounger.condensationFullSeconds = 0.60f;\n    const auto rampPlan = render::planContrailRenderSamples(\n        {rampOlder, rampYounger}, settings);\n    require(!rampPlan.samples.empty(),\n            "nucleation ramp produces visible sections after the cooling zone");\n\n    std::unordered_set<std::uint64_t> renderIds;''')
+
+          replace_exact(
+              'tests/LiveContrailDebugTests.cpp',
+              '#include "engine/ContrailSimulation.h"\n',
+              '#include "engine/ContrailSimulation.h"\n#include "engine/ContrailCondensationModel.h"\n')
+          replace_exact(
+              'tests/LiveContrailDebugTests.cpp',
+              '''    engine::WakeFluidAircraftGeometry aircraft;\n    aircraft.wingspanM = 35.8f;''',
+              '''    const auto coldHumidHandoff = engine::calculateContrailCondensationHandoff(\n        228.0f, 115.0f, 30000.0f, 390.0f, 1.10f, 230.0f);\n    const auto warmDryHandoff = engine::calculateContrailCondensationHandoff(\n        240.0f, 50.0f, 30000.0f, 390.0f, 1.10f, 230.0f);\n    require(coldHumidHandoff.visibleStartSeconds < warmDryHandoff.visibleStartSeconds,\n            "cold humid air begins visible condensation sooner");\n    require(coldHumidHandoff.fullOpacitySeconds < warmDryHandoff.fullOpacitySeconds,\n            "cold humid air reaches established contrail opacity sooner");\n    require(coldHumidHandoff.fullOpacitySeconds > coldHumidHandoff.visibleStartSeconds,\n            "condensation handoff always has a positive opacity ramp");\n\n    engine::WakeFluidAircraftGeometry aircraft;\n    aircraft.wingspanM = 35.8f;''')
+          replace_exact(
+              'tests/LiveContrailDebugTests.cpp',
+              '''    require(live.summary().maximumWakeCoreRadiusM > 0.50f,\n            "live diagnostics record growing vortex cores");\n\n    engine::LiveContrailEngine geometryEngine;''',
+              '''    require(live.summary().maximumWakeCoreRadiusM > 0.50f,\n            "live diagnostics record growing vortex cores");\n    bool observedCondensationHandoff = false;\n    for (const auto& parcel : live.parcels()) {\n        if (parcel.condensationStartSeconds >= 0.08f &&\n            parcel.condensationFullSeconds > parcel.condensationStartSeconds) {\n            observedCondensationHandoff = true;\n            break;\n        }\n    }\n    require(observedCondensationHandoff,\n            "live parcels retain their ambient-conditioned condensation handoff");\n\n    engine::LiveContrailEngine geometryEngine;''')
+
+          workflow = Path('.github/workflows/engine-v1-contrail-debug.yml')
+          workflow_text = workflow.read_text(encoding='utf-8')
+          workflow_text = workflow_text.replace('v4.4', 'v4.5').replace('V4.4', 'V4.5')
+          workflow_text = workflow_text.replace(
+              'V4.5 COMPOSITE CHANGES',
+              'V4.5 LEVELUP HANDOFF CHANGES')
+          workflow_text = workflow_text.replace(
+              '          - The accepted 0.12-second exhaust handoff, Hermite continuity and fluid parcel\n            positions are retained.\n',
+              '          - The fixed 0.12-second white-trail handoff is replaced by ambient- and engine-conditioned cooling and nucleation timing.\n          - B738 wake geometry now comes from parsed ACF wingtip span and mass, with guarded LevelUp-compatible fallbacks.\n          - Hermite continuity, the single composite layer and wake-fluid parcel positions are retained.\n')
+          workflow_text = workflow_text.replace(
+              'engine-v1-renderer-foundation-v4.5-single-layer-composite',
+              'engine-v1-levelup-b738-contrail-v4.5-condensation-handoff')
+          workflow.write_text(workflow_text, encoding='utf-8')
+
+          Path('.github/workflows/agent-levelup-contrail-v1.yml').unlink()
+          PY
+
+      - name: Configure deterministic tests
+        run: >-
+          cmake -S . -B build-agent
+          -DFFATMO_BUILD_PLUGIN=OFF
+          -DFFATMO_BUILD_COMPANION=OFF
+          -DFFATMO_BUILD_IMGUI_PANEL=OFF
+          -DFFATMO_BUILD_GEOMETRY_DEBUG=OFF
+          -DFFATMO_BUILD_RECORDER_DEBUG=OFF
+          -DFFATMO_BUILD_CONTRAIL_DEBUG=OFF
+          -DFFATMO_BUILD_REPLAY_RUNNER=ON
+          -DFFATMO_BUILD_TESTS=ON
+
+      - name: Build and run tests
+        run: |
+          cmake --build build-agent --parallel 2
+          ctest --test-dir build-agent --output-on-failure
+
+      - name: Commit implementation
+        shell: bash
+        run: |
+          git config user.name "FreeFlight Engineering Bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add -A
+          git commit -m "Implement LevelUp B738 condensation handoff [levelup-v1-applied]"
+          git push origin HEAD:agent/levelup-contrail-v1

@@ -119,7 +119,9 @@ def generate_texture() -> bytes:
 
             edge = max(0.0, min(1.0, (1.11 - radius2) / 0.34))
             density = max(0.0, min(1.0, density * edge))
-            alpha = int(round(188.0 * density))
+            # The shape remains soft, but layered billboards need enough peak
+            # alpha to build a convincing white ice-cloud body in daylight.
+            alpha = int(round(255.0 * density))
             pixels.extend((255, 255, 255, alpha))
     return bytes(pixels)
 

@@ -1,0 +1,329 @@
+name: Build Renderer Foundation v5.0.1 Safe Start
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - agent/levelup-particle-renderer-v5
+    paths:
+      - "src/ContrailParticleRenderer.h"
+      - "src/ContrailDebugPlugin.cpp"
+      - "tools/generate_particle_renderer_v5_assets.py"
+      - ".github/workflows/engine-v1-particle-renderer-v5-safe-start.yml"
+  pull_request:
+    branches:
+      - engine/v1
+    paths:
+      - "src/ContrailParticleRenderer.h"
+      - "src/ContrailDebugPlugin.cpp"
+      - "tools/generate_particle_renderer_v5_assets.py"
+      - ".github/workflows/engine-v1-particle-renderer-v5-safe-start.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ffatmo-renderer-v501-safe-${{ github.event.pull_request.number || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+    env:
+      TARGET_BRANCH: ${{ github.head_ref || github.ref_name }}
+
+    steps:
+      - name: Check out particle renderer source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref || github.ref_name }}
+          fetch-depth: 0
+
+      - name: Apply deferred particle-object safe start
+        shell: pwsh
+        run: |
+          @'
+          from pathlib import Path
+
+          def replace_once(text: str, old: str, new: str, label: str) -> str:
+              count = text.count(old)
+              if count == 0 and new in text:
+                  print(f"{label}: already applied")
+                  return text
+              if count != 1:
+                  raise RuntimeError(f"{label}: expected one source match, found {count}")
+              return text.replace(old, new, 1)
+
+          renderer_path = Path("src/ContrailParticleRenderer.h")
+          text = renderer_path.read_text(encoding="utf-8-sig")
+
+          text = replace_once(
+              text,
+              '''        running_ = true;
+                      XPLMLoadObjectAsync(objectPath.string().c_str(), objectLoadedCallback, this);
+                      return true;
+          ''',
+              '''        objectPath_ = objectPath;
+                      running_ = true;
+                      loadAttempted_ = false;
+                      deferredNonEmptyFrameCount_ = 0;
+                      log("Renderer v5.0.1 armed; particle OBJ load is deferred until live trail samples exist.\\n");
+                      return true;
+          ''',
+              "defer startup object load",
+          )
+
+          text = replace_once(
+              text,
+              '''        loadedObjectCount_ = 0;
+                      visibleInstanceCount_ = 0;
+                      active_.fill(false);
+                      selectedPerAsset_.fill(0);
+                      renderedPerAsset_.fill(0);
+          ''',
+              '''        loadedObjectCount_ = 0;
+                      visibleInstanceCount_ = 0;
+                      active_.fill(false);
+                      selectedPerAsset_.fill(0);
+                      renderedPerAsset_.fill(0);
+                      objectPath_.clear();
+                      loadAttempted_ = false;
+                      deferredNonEmptyFrameCount_ = 0;
+          ''',
+              "reset deferred loader state",
+          )
+
+          text = replace_once(
+              text,
+              '''        if (!enabled_ || !ready()) {
+                          if (ready()) resetInstances();
+                          return;
+                      }
+          ''',
+              '''        if (!enabled_ || !running_) {
+                          if (ready()) resetInstances();
+                          return;
+                      }
+
+                      // Never ask X-Plane to parse/load the particle OBJ during plugin
+                      // startup. Wait until the live engine has produced actual trail
+                      // samples for several flight-loop frames; at that point the user
+                      // aircraft and world/scenery systems are fully operational.
+                      if (!ready()) {
+                          if (!object_ && !loadAttempted_ && !samples.empty()) {
+                              ++deferredNonEmptyFrameCount_;
+                              if (deferredNonEmptyFrameCount_ < 3) return;
+
+                              loadAttempted_ = true;
+                              object_ = XPLMLoadObject(objectPath_.string().c_str());
+                              if (!object_) {
+                                  log("Renderer v5.0.1 could not load the deferred particle OBJ.\\n");
+                                  return;
+                              }
+                              loadedObjectCount_ = 1;
+                              createInstances();
+                              if (ready()) {
+                                  log("Renderer v5.0.1 native ribbon emitters loaded after the safe-start gate.\\n");
+                              } else {
+                                  log("Renderer v5.0.1 could not create both particle emitter instances.\\n");
+                              }
+                          }
+                          if (!ready()) return;
+                      }
+          ''',
+              "deferred load gate",
+          )
+
+          text = replace_once(
+              text,
+              '''    std::filesystem::path assetDirectory_;
+                  XPLMObjectRef object_ = nullptr;
+          ''',
+              '''    std::filesystem::path assetDirectory_;
+                  std::filesystem::path objectPath_;
+                  XPLMObjectRef object_ = nullptr;
+          ''',
+              "deferred object path member",
+          )
+
+          text = replace_once(
+              text,
+              '''    bool running_ = false;
+                  bool enabled_ = true;
+          ''',
+              '''    bool running_ = false;
+                  bool enabled_ = true;
+                  bool loadAttempted_ = false;
+                  std::size_t deferredNonEmptyFrameCount_ = 0;
+          ''',
+              "deferred loader members",
+          )
+
+          text = text.replace("v5.0", "v5.0.1")
+          if "XPLMLoadObjectAsync(" in text:
+              raise RuntimeError("unsafe asynchronous startup object-load call remains")
+          if "XPLMLoadObject(objectPath_.string().c_str())" not in text:
+              raise RuntimeError("safe synchronous deferred object load is missing")
+          if "deferredNonEmptyFrameCount_ < 3" not in text:
+              raise RuntimeError("three-frame live-sample gate is missing")
+          renderer_path.write_text(text, encoding="utf-8", newline="\n")
+
+          plugin_path = Path("src/ContrailDebugPlugin.cpp")
+          plugin = plugin_path.read_text(encoding="utf-8-sig")
+          plugin = plugin.replace("v5.0", "v5.0.1")
+          plugin = plugin.replace("V5.0", "V5.0.1")
+          plugin = plugin.replace("v5 point 0", "v5 point 0 point 1")
+          plugin = plugin.replace(
+              "Could not start Renderer Foundation v5.0.1. Check the eight assets folder.",
+              "Could not arm Renderer Foundation v5.0.1. Check the particle assets folder.",
+          )
+          if "WORLD V5.0.1 READY" not in plugin:
+              raise RuntimeError("v5.0.1 overlay label is missing")
+          plugin_path.write_text(plugin, encoding="utf-8", newline="\n")
+          '@ | python -
+
+      - name: Validate safe-start source policy
+        shell: pwsh
+        run: |
+          $renderer = Get-Content src/ContrailParticleRenderer.h -Raw
+          $plugin = Get-Content src/ContrailDebugPlugin.cpp -Raw
+          if ($renderer -match 'XPLMLoadObjectAsync\(') {
+            throw "Unsafe asynchronous startup object load remains"
+          }
+          if ($renderer -notmatch 'deferredNonEmptyFrameCount_ < 3') {
+            throw "Live-sample safe-start gate is missing"
+          }
+          if ($renderer -notmatch 'XPLMLoadObject\(objectPath_\.string\(\)\.c_str\(\)\)') {
+            throw "Deferred synchronous load is missing"
+          }
+          if ($plugin -notmatch 'WORLD V5\.0\.1 READY') {
+            throw "Runtime label is not v5.0.1"
+          }
+
+      - name: Fetch X-Plane Plugin SDK 4.3.0
+        id: xplane_sdk
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path third_party | Out-Null
+          $archive = Join-Path $pwd "third_party/XPSDK430.zip"
+          $destination = Join-Path $pwd "third_party/xplane-sdk"
+          for ($attempt = 1; $attempt -le 5; $attempt++) {
+            try {
+              if (Test-Path $archive) { Remove-Item $archive -Force }
+              Invoke-WebRequest `
+                -Uri "https://developer.x-plane.com/wp-content/plugins/code-sample-generation/sdk_zip_files/XPSDK430.zip" `
+                -OutFile $archive `
+                -Headers @{ "User-Agent" = "FFAtmo-GitHub-Actions" }
+              if ((Get-Item $archive).Length -lt 1000000) { throw "SDK archive is unexpectedly small" }
+              break
+            } catch {
+              if ($attempt -eq 5) { throw }
+              Start-Sleep -Seconds (8 * $attempt)
+            }
+          }
+          Expand-Archive -LiteralPath $archive -DestinationPath $destination -Force
+          $header = Get-ChildItem $destination -Recurse -Filter "XPLMPlugin.h" |
+            Where-Object { $_.FullName.Replace('\', '/') -like '*/CHeaders/XPLM/XPLMPlugin.h' } |
+            Select-Object -First 1
+          if (-not $header) { throw "XPLMPlugin.h was not found" }
+          $sdkRoot = Split-Path (Split-Path (Split-Path $header.FullName -Parent) -Parent) -Parent
+          "path=$sdkRoot" >> $env:GITHUB_OUTPUT
+
+      - name: Configure safe-start particle build
+        shell: pwsh
+        run: >-
+          cmake -S . -B build-particle-v501 -A x64
+          -DXPLANE_SDK="${{ steps.xplane_sdk.outputs.path }}"
+          -DFFATMO_BUILD_PLUGIN=OFF
+          -DFFATMO_BUILD_COMPANION=OFF
+          -DFFATMO_BUILD_IMGUI_PANEL=OFF
+          -DFFATMO_BUILD_GEOMETRY_DEBUG=OFF
+          -DFFATMO_BUILD_RECORDER_DEBUG=OFF
+          -DFFATMO_BUILD_CONTRAIL_DEBUG=ON
+          -DFFATMO_BUILD_REPLAY_RUNNER=OFF
+          -DFFATMO_BUILD_TESTS=ON
+          -DFFATMO_GIT_REVISION="${{ github.sha }}"
+
+      - name: Build plugin and deterministic tests
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path build-logs | Out-Null
+          & cmake --build build-particle-v501 --config Release --target FFAtmoContrailDebug ffatmo_core_tests ffatmo_acf_tests ffatmo_replay_tests ffatmo_replay_runner_tests ffatmo_contrail_tests ffatmo_live_contrail_debug_tests ffatmo_contrail_render_planner_tests *> build-logs/build.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & ctest --test-dir build-particle-v501 -C Release --output-on-failure *> build-logs/tests.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not (Test-Path package/FFAtmoContrailDebug/64/win.xpl)) {
+            throw "v5.0.1 win.xpl was not produced"
+          }
+
+      - name: Generate and validate particle assets
+        shell: pwsh
+        run: |
+          python tools/generate_particle_renderer_v5_assets.py generated-particle-assets
+          $obj = Get-Content generated-particle-assets/contrail_ribbon.obj -Raw
+          $pss = Get-Content generated-particle-assets/contrail_v5.pss -Raw
+          if ($obj -match 'TRIS|TEXTURE_LIT') { throw "Particle proof contains card geometry" }
+          if ($obj -notmatch 'PARTICLE_SYSTEM contrail_v5\.pss') { throw "Particle OBJ reference is missing" }
+          if ($pss -notmatch 'BILLBOARD_MODE RIBBON') { throw "Ribbon mode is missing" }
+          if ($pss -notmatch 'EMIT_MODE STREAM') { throw "Streaming emitter is missing" }
+          if ($pss -notmatch 'BLEND_MODE NORMAL') { throw "Normal alpha blend is missing" }
+
+      - name: Commit verified safe-start implementation
+        shell: pwsh
+        run: |
+          if (-not (git status --porcelain -- src/ContrailParticleRenderer.h src/ContrailDebugPlugin.cpp)) {
+            Write-Host "No safe-start source changes to commit"
+            exit 0
+          }
+          git config user.name "FreeFlight Engineering Bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add src/ContrailParticleRenderer.h src/ContrailDebugPlugin.cpp
+          git commit -m "Defer Renderer v5 particle load until live flight samples"
+          git push origin "HEAD:$env:TARGET_BRANCH"
+
+      - name: Upload build diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: FFAtmoParticleRendererV501-build-diagnostics
+          path: build-logs
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Assemble v5.0.1 safe-start package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path artifact/FFAtmoContrailDebug/64 | Out-Null
+          New-Item -ItemType Directory -Force -Path artifact/FFAtmoContrailDebug/assets | Out-Null
+          Copy-Item package/FFAtmoContrailDebug/64/win.xpl artifact/FFAtmoContrailDebug/64/win.xpl -Force
+          Copy-Item generated-particle-assets/* artifact/FFAtmoContrailDebug/assets/ -Force
+          @'
+          FFAtmo LevelUp 737-800NG Renderer Foundation v5.0.1 Safe Start
+
+          CRASH CORRECTION
+          v5.0 requested an OBJ load during X-Plane's early plugin-enable phase.
+          This build never loads the particle OBJ during startup. It arms the renderer,
+          waits until real contrail samples have existed for three flight-loop frames,
+          and then performs one synchronous load after the aircraft/world are active.
+
+          INSTALL
+          1. Close X-Plane.
+          2. Delete the complete previous FFAtmoContrailDebug folder.
+          3. Copy this FFAtmoContrailDebug folder into Resources/plugins/.
+          4. Start X-Plane and allow the LevelUp B738 flight to load normally.
+
+          FIRST TEST
+          First confirm X-Plane reaches the cockpit without crashing. The renderer remains
+          dormant on the loading screens and while no trail samples exist. Only after that
+          should Forced Dry Preview be tested in flight.
+          '@ | Set-Content artifact/FFAtmoContrailDebug/README_TESTING.txt -Encoding utf8
+          "renderer=engine-v1-levelup-b738-v5.0.1-deferred-safe-start" | Set-Content artifact/FFAtmoContrailDebug/BUILD_INFO.txt -Encoding utf8
+          "git_revision=${{ github.sha }}" | Add-Content artifact/FFAtmoContrailDebug/BUILD_INFO.txt -Encoding utf8
+
+      - name: Upload v5.0.1 test plugin
+        uses: actions/upload-artifact@v4
+        with:
+          name: FFAtmoContrailDebug-v5.0.1-win64
+          path: artifact/FFAtmoContrailDebug
+          if-no-files-found: error
+          retention-days: 14

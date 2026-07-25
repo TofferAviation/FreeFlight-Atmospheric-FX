@@ -23,4 +23,7 @@ v5.0.1 correction:
 - the two particle instances are created only after that deferred load succeeds
 - the existing LevelUp geometry, nucleation model and wake physics remain unchanged
 
-The safe-start source compiled successfully and passed the complete deterministic test suite. In-sim validation must first confirm that X-Plane reaches the cockpit without crashing before the particle appearance is evaluated.
+The safe-start source compiled successfully and passed the complete deterministic test suite. In-sim validation is split into two gates:
+
+1. Confirm that X-Plane reaches the loaded LevelUp cockpit without crashing.
+2. Only after startup passes, enter Forced Dry Preview and evaluate the ribbon appearance.

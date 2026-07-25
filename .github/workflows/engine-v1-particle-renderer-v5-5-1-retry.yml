@@ -1,0 +1,136 @@
+name: Build Renderer Foundation v5.5.1 Clean Retry
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - agent/levelup-particle-renderer-v5
+    paths:
+      - "tools/fix_v5_5_regex_literals.py"
+      - "tools/patch_v5_5_1_visibility.py"
+      - ".github/workflows/engine-v1-particle-renderer-v5-5-1-retry.yml"
+  pull_request:
+    branches:
+      - engine/v1
+    paths:
+      - "tools/fix_v5_5_regex_literals.py"
+      - "tools/patch_v5_5_1_visibility.py"
+      - ".github/workflows/engine-v1-particle-renderer-v5-5-1-retry.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ffatmo-renderer-v551-clean-${{ github.event.pull_request.number || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Check out particle renderer branch
+        uses: actions/checkout@v4
+        with:
+          ref: agent/levelup-particle-renderer-v5
+
+      - name: Apply corrected v5.5.1 runtime
+        shell: pwsh
+        run: |
+          python tools/fix_v5_5_regex_literals.py
+          python tools/patch_v5_4_1_runtime.py
+          python tools/patch_v5_5_parcel_clusters.py
+          python tools/patch_v5_5_1_visibility.py
+          $renderer = Get-Content src/ContrailParticleRenderer.h -Raw
+          $plugin = Get-Content src/ContrailDebugPlugin.cpp -Raw
+          if ($renderer -match 'XPLMLoadObjectAsync\(') { throw "Unsafe async loader returned" }
+          if ($renderer -notmatch 'deferredNonEmptyFrameCount_ < 3') { throw "Safe-start gate is missing" }
+          if ($renderer -notmatch '0\.095f \+ std::sqrt\(anchor\.opacityStrength\) \* 0\.50f') { throw "Visibility calibration missing" }
+          if ($renderer -notmatch 'agreement < 0\.0') { throw "Tangent reversal guard missing" }
+          if ($renderer -match 'BILLBOARD_MODE RIBBON') { throw "Ribbon mode returned" }
+          if ($plugin -notmatch 'WORLD V5\.5\.1 READY') { throw "v5.5.1 label missing" }
+
+      - name: Fetch X-Plane Plugin SDK 4.3.0
+        id: sdk
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path third_party | Out-Null
+          $archive = Join-Path $pwd "third_party/XPSDK430.zip"
+          $destination = Join-Path $pwd "third_party/xplane-sdk"
+          for ($attempt = 1; $attempt -le 5; $attempt++) {
+            try {
+              if (Test-Path $archive) { Remove-Item $archive -Force }
+              Invoke-WebRequest -Uri "https://developer.x-plane.com/wp-content/plugins/code-sample-generation/sdk_zip_files/XPSDK430.zip" -OutFile $archive -Headers @{ "User-Agent" = "FFAtmo-GitHub-Actions" }
+              if ((Get-Item $archive).Length -lt 1000000) { throw "SDK archive is unexpectedly small" }
+              break
+            } catch {
+              if ($attempt -eq 5) { throw }
+              Start-Sleep -Seconds (8 * $attempt)
+            }
+          }
+          Expand-Archive -LiteralPath $archive -DestinationPath $destination -Force
+          $header = Get-ChildItem $destination -Recurse -Filter "XPLMPlugin.h" | Where-Object { $_.FullName.Replace('\', '/') -like '*/CHeaders/XPLM/XPLMPlugin.h' } | Select-Object -First 1
+          if (-not $header) { throw "XPLMPlugin.h was not found" }
+          $root = Split-Path (Split-Path (Split-Path $header.FullName -Parent) -Parent) -Parent
+          "path=$root" >> $env:GITHUB_OUTPUT
+
+      - name: Compile and run deterministic tests
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path build-logs | Out-Null
+          cmake -S . -B build-v551-clean -A x64 -DXPLANE_SDK="${{ steps.sdk.outputs.path }}" -DFFATMO_BUILD_PLUGIN=OFF -DFFATMO_BUILD_COMPANION=OFF -DFFATMO_BUILD_IMGUI_PANEL=OFF -DFFATMO_BUILD_GEOMETRY_DEBUG=OFF -DFFATMO_BUILD_RECORDER_DEBUG=OFF -DFFATMO_BUILD_CONTRAIL_DEBUG=ON -DFFATMO_BUILD_REPLAY_RUNNER=OFF -DFFATMO_BUILD_TESTS=ON -DFFATMO_GIT_REVISION="${{ github.sha }}"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & cmake --build build-v551-clean --config Release --target FFAtmoContrailDebug ffatmo_core_tests ffatmo_acf_tests ffatmo_replay_tests ffatmo_replay_runner_tests ffatmo_contrail_tests ffatmo_live_contrail_debug_tests ffatmo_contrail_render_planner_tests *> build-logs/build.txt
+          if ($LASTEXITCODE -ne 0) { Get-Content build-logs/build.txt; exit $LASTEXITCODE }
+          & ctest --test-dir build-v551-clean -C Release --output-on-failure *> build-logs/tests.txt
+          if ($LASTEXITCODE -ne 0) { Get-Content build-logs/tests.txt; exit $LASTEXITCODE }
+          if (-not (Test-Path package/FFAtmoContrailDebug/64/win.xpl)) { throw "v5.5.1 plugin was not produced" }
+
+      - name: Generate and validate billboard assets
+        shell: pwsh
+        run: |
+          python tools/generate_particle_renderer_v5_4_1_assets.py generated-v551-assets
+          $obj = Get-Content generated-v551-assets/contrail_billboard.obj -Raw
+          $pss = Get-Content generated-v551-assets/contrail_v5_4_1_billboard.pss -Raw
+          if ($pss -notmatch 'BILLBOARD_MODE BILLBOARD') { throw "Billboard mode missing" }
+          if ($pss -match 'BILLBOARD_MODE RIBBON') { throw "Ribbon mode returned" }
+          if ($pss -notmatch 'EMIT_MODE ATTACH') { throw "Attach mode missing" }
+          if ($obj -match 'TRIS|TEXTURE_LIT') { throw "Legacy card material returned" }
+
+      - name: Assemble v5.5.1 test package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path artifact/FFAtmoContrailDebug/64 | Out-Null
+          New-Item -ItemType Directory -Force -Path artifact/FFAtmoContrailDebug/assets | Out-Null
+          Copy-Item package/FFAtmoContrailDebug/64/win.xpl artifact/FFAtmoContrailDebug/64/win.xpl -Force
+          Copy-Item generated-v551-assets/* artifact/FFAtmoContrailDebug/assets/ -Force
+          @'
+          FFAtmo LevelUp B738 Renderer Foundation v5.5.1 Visibility Hotfix
+
+          - Restores clearly visible grey-white primary parcel clouds.
+          - Increases companion-cloud visibility conservatively.
+          - Rebuilds tangents from smoothed physical parcel positions.
+          - Flips adjacent 180-degree tangent reversals.
+          - Retains parcel ownership, safe start, cooling gap and Wake Fluid v1.
+
+          Confirm WORLD V5.5.1 READY, use Forced Dry Preview, fly straight for
+          20-30 seconds, then make one gentle 10-15 degree bank.
+          '@ | Set-Content artifact/FFAtmoContrailDebug/README_TESTING.txt -Encoding utf8
+          "renderer=engine-v1-levelup-b738-v5.5.1-visibility-hotfix" | Set-Content artifact/FFAtmoContrailDebug/BUILD_INFO.txt -Encoding utf8
+          "git_revision=${{ github.sha }}" | Add-Content artifact/FFAtmoContrailDebug/BUILD_INFO.txt -Encoding utf8
+
+      - name: Upload build diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: FFAtmo-v5.5.1-clean-build-diagnostics
+          path: build-logs
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Upload v5.5.1 package
+        uses: actions/upload-artifact@v4
+        with:
+          name: FFAtmoContrailDebug-v5.5.1-clean-win64
+          path: artifact/FFAtmoContrailDebug
+          if-no-files-found: error
+          retention-days: 14

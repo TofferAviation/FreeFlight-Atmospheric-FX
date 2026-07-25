@@ -115,20 +115,23 @@ jobs:
           $testExit = $LASTEXITCODE
           if ($testExit -ne 0) { exit $testExit }
           $plugin = "package/FFAtmoContrailDebug/64/win.xpl"
-          if (-not (Test-Path $plugin)) { throw "LevelUp B738 Contrail v4.5 win.xpl was not produced" }
-          if ((Get-Item $plugin).Length -lt 100000) { throw "LevelUp B738 Contrail v4.5 win.xpl is unexpectedly small" }
+          if (-not (Test-Path $plugin)) { throw "LevelUp B738 Contrail v4.6 win.xpl was not produced" }
+          if ((Get-Item $plugin).Length -lt 100000) { throw "LevelUp B738 Contrail v4.6 win.xpl is unexpectedly small" }
 
-      - name: Generate and validate Renderer Foundation v4.5 assets
+      - name: Generate and validate Renderer Foundation v4.6 assets
         shell: pwsh
         run: |
           python tools/generate_contrail_assets.py generated-contrail-assets
           $objects = Get-ChildItem generated-contrail-assets -Filter "contrail_core_*.obj"
           $textures = Get-ChildItem generated-contrail-assets -Filter "contrail_core_*.png"
-          if ($objects.Count -ne 8) { throw "Expected eight Renderer v4.5 composite OBJ files" }
-          if ($textures.Count -ne 8) { throw "Expected eight Renderer v4.5 composite PNG files" }
+          if ($objects.Count -ne 8) { throw "Expected eight Renderer v4.6 composite OBJ files" }
+          if ($textures.Count -ne 8) { throw "Expected eight Renderer v4.6 composite PNG files" }
           $assetInfo = Get-Content generated-contrail-assets/ASSET_INFO.txt -Raw
-          if ($assetInfo -notmatch 'single-layer composite') {
-            throw "ASSET_INFO does not identify the single-layer composite asset set"
+          if ($assetInfo -notmatch 'albedo-only single-layer composite') {
+            throw "ASSET_INFO does not identify the v4.6 albedo-only asset set"
+          }
+          if ($assetInfo -notmatch 'No TEXTURE_LIT') {
+            throw "ASSET_INFO does not confirm removal of the emissive overlay"
           }
           if ($assetInfo -notmatch 'No separate core object') {
             throw "ASSET_INFO does not confirm removal of the separate core object"
@@ -140,8 +143,11 @@ jobs:
             $lines = Get-Content $object.FullName
             if (-not ($lines -match '^ATTR_LOD ')) { throw "Missing ATTR_LOD: $($object.Name)" }
             if (-not ($lines -match '^ATTR_blend$')) { throw "Missing ATTR_blend: $($object.Name)" }
-            if (-not ($lines -match '^GLOBAL_luminance 250$')) { throw "Missing neutral luminance: $($object.Name)" }
-            if (-not ($lines -match '^ATTR_emission_rgb 1.0 1.0 1.0$')) { throw "Missing white emission override: $($object.Name)" }
+            if (-not ($lines -match '^POINT_COUNTS 8 0 0 12$')) { throw "Missing matched front/back faces: $($object.Name)" }
+            if ($lines -match '^TEXTURE_LIT ') { throw "Unexpected alpha-bearing LIT texture: $($object.Name)" }
+            if ($lines -match '^GLOBAL_luminance ') { throw "Unexpected luminance overlay: $($object.Name)" }
+            if ($lines -match '^ATTR_emission_rgb ') { throw "Unexpected deprecated emission state: $($object.Name)" }
+            if ($lines -match '^ATTR_no_cull$') { throw "Unexpected no-cull back-face path: $($object.Name)" }
             if (-not ($lines -match 'ffatmo/contrail_debug/width')) { throw "Missing width scale: $($object.Name)" }
             if (-not ($lines -match 'ffatmo/contrail_debug/length')) { throw "Missing length scale: $($object.Name)" }
           }
@@ -155,7 +161,7 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
-      - name: Assemble LevelUp B738 Contrail v4.5 package
+      - name: Assemble LevelUp B738 Contrail v4.6 package
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path artifact/FFAtmoContrailDebug/64 | Out-Null
@@ -163,11 +169,12 @@ jobs:
           Copy-Item package/FFAtmoContrailDebug/64/win.xpl artifact/FFAtmoContrailDebug/64/win.xpl -Force
           Copy-Item generated-contrail-assets/* artifact/FFAtmoContrailDebug/assets/ -Force
           @'
-          FFAtmo LevelUp 737-800NG Contrail Vertical Slice v4.5
+          FFAtmo LevelUp 737-800NG Contrail Vertical Slice v4.6
 
           PURPOSE
-          Validate the first complete LevelUp B738 contrail handoff on top of the
-          accepted single-layer renderer and Wake Fluid Simulation v1.
+          Correct the opaque black/grey segmented card failure observed in the first
+          LevelUp B738 v4.5 in-sim visual run without changing the accepted cooling,
+          nucleation, ACF exhaust geometry or Wake Fluid Simulation v1.
 
           INSTALL
           1. Close X-Plane.
@@ -177,44 +184,36 @@ jobs:
           4. Keep the included assets folder beside the 64 folder.
           5. Keep Effects Takeover v2.2 installed on the LevelUp B738.
 
-          V4.5 LEVELUP HANDOFF CHANGES
-          - The white trail no longer begins at the CFM56 exhaust nozzle.
-          - Cooling and ice-nucleation timing responds to temperature, ice humidity,
-            pressure, exhaust velocity, fuel flow and true airspeed.
-          - A faint synthetic trail head is positioned at the calculated nucleation point.
-          - Opacity rises smoothly from first crystals to an established contrail.
-          - Parsed ACF exhaust origins are retained for both CFM56 engines.
-          - Parsed wingtip span and aircraft mass initialise the B738 wake solver,
-            with guarded 35.8 m / 65,000 kg fallbacks when ACF geometry is incomplete.
-          - The single composite layer, Hermite continuity and Wake Fluid v1 remain intact.
+          V4.6 TRANSPARENCY FIX
+          - The RGBA cloud texture is now used only as the daytime albedo texture.
+          - The alpha-bearing TEXTURE_LIT overlay has been removed.
+          - GLOBAL_luminance and deprecated ATTR_emission_rgb have been removed.
+          - Each card now has separately culled front/back faces with opposite normals.
+          - Standard OBJ alpha blending remains enabled.
+          - Condensation timing, exhaust placement, stream continuity and wake physics are unchanged.
 
           TEST
           1. Load the Effects Takeover-patched LevelUp 737-800NG.
           2. Select Forced Dry Preview.
-          3. Fly for 30-45 seconds.
-          4. Inspect from rear-quarter, side and directly along the trail.
-          5. Make one gentle 20-30 degree bank turn.
-          6. Repeat once in Forced Persistent Preview.
+          3. Fly for 20-30 seconds.
+          4. Inspect from front looking along the trail, rear-quarter and side.
+          5. Repeat once in Forced Persistent Preview.
 
           PASS TARGET
-          - clear hot-exhaust gap behind both CFM56 nozzles
-          - faint crystals appear after the cooling zone, not at the nozzle
-          - opacity builds smoothly without a sudden white pop
-          - both engine streams remain distinct near the aircraft
-          - wake-fluid displacement remains visible farther behind
-          - no black, green or terrain-coloured dots
+          - no opaque black or grey pipe-shaped cards
+          - transparent card edges blend into the sky
+          - white/faint-grey cloud density instead of dark geometry
+          - clear cooling gap remains behind both CFM56 nozzles
+          - two streams remain distinct near the aircraft
           - no visible repeating card gaps or separate inner strand
-          - no camera spikes or large continuity gaps
-          - render_planner_selected_core_count equals 0
-          - render_planner_selected_halo_count equals selected_count
-          - world_renderer_pool_capacity_drop_count remains 0
+          - no stream breaks or pool-capacity drops
 
           SEND BACK
-          - one short rear/orbit video
+          - one short front-to-side orbit video
           - X-Plane 12/Log.txt
           - FFAtmoContrailDebug/reports/contrail_visual_debug.txt
           '@ | Set-Content artifact/FFAtmoContrailDebug/README_TESTING.txt -Encoding utf8
-          "renderer=engine-v1-levelup-b738-contrail-v4.5-condensation-handoff" | Set-Content artifact/FFAtmoContrailDebug/BUILD_INFO.txt -Encoding utf8
+          "renderer=engine-v1-levelup-b738-contrail-v4.6-albedo-transparency-fix" | Set-Content artifact/FFAtmoContrailDebug/BUILD_INFO.txt -Encoding utf8
           "git_revision=${{ github.sha }}" | Add-Content artifact/FFAtmoContrailDebug/BUILD_INFO.txt -Encoding utf8
 
       - name: Upload live contrail visual debug plugin

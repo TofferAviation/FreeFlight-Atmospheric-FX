@@ -30,3 +30,5 @@ X-Plane supports multiple sub-emitters in general, so this test does not prove t
 - retain the wider cool-white v5.1 ribbon density and brighter lighting curves
 - defer the billboard halo until it can be tested as a separate emitter/instance
 - leave LevelUp exhaust geometry, cooling, nucleation and Wake Fluid Simulation v1 unchanged
+
+A static-validated v5.1.2 test package has been assembled from the proven safe-start binary with the mixed particle asset removed. In-sim visibility validation is still required.

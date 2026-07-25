@@ -43,6 +43,16 @@ jobs:
       - name: Apply v5.5 parcel-cluster runtime
         shell: pwsh
         run: |
+          $path = "tools/patch_v5_5_parcel_clusters.py"
+          $patcher = Get-Content $path -Raw
+          $patcher = $patcher.Replace(
+            '    update_replacement + "\n    void setEnabled",',
+            '    lambda _: update_replacement + "\n    void setEnabled",')
+          $patcher = $patcher.Replace(
+            '    set_billboard_replacement + "\n    void hideInstance",',
+            '    lambda _: set_billboard_replacement + "\n    void hideInstance",')
+          Set-Content $path $patcher -Encoding utf8 -NoNewline
+
           python tools/patch_v5_4_1_runtime.py
           python tools/patch_v5_5_parcel_clusters.py
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate deterministic Renderer Foundation v4.4 single-layer composite assets."""
+"""Generate deterministic Renderer Foundation v4.6 albedo-only composite assets."""
 
 from __future__ import annotations
 
@@ -15,8 +15,6 @@ HEIGHT = 256
 BORDER_FRACTION = 0.08
 ALPHA_LEVELS = (0.028, 0.045, 0.070, 0.100)
 VARIANTS = ("a", "b")
-LUMINANCE_NITS = 250
-EMISSION_RGB = "1.0 1.0 1.0"
 
 
 def png_chunk(kind: bytes, payload: bytes) -> bytes:
@@ -102,10 +100,6 @@ def make_texture(maximum_alpha: float, seed: int) -> bytes:
                 + 0.045 * math.sin(py * 7.1 + centre_phase)
                 + 0.025 * math.sin(py * 15.2 + edge_phase)
             )
-
-            # One continuous density profile: the centre and feathered halo are
-            # baked into the same alpha channel, so no second transparent card
-            # can cut a dark hole through the trail.
             density = (
                 end_envelope
                 * edge_envelope
@@ -156,15 +150,14 @@ def validate_pixels(name: str, pixels: bytes, maximum_alpha: float) -> None:
                 or x >= WIDTH - border_pixels
                 or y >= HEIGHT - border_pixels
             ) and alpha != 0:
-                raise RuntimeError(f"{name}: outer eight-percent border is not transparent")
+                raise RuntimeError(f"{name}: transparent border is not empty")
             observed_maximum_alpha = max(observed_maximum_alpha, alpha)
             if alpha > 0:
                 nonzero_alpha += 1
             if abs(x - WIDTH // 2) <= 3 and HEIGHT * 0.25 < y < HEIGHT * 0.75 and alpha > 0:
                 centre_nonzero += 1
 
-    allowed_maximum = int(math.ceil(maximum_alpha * 255.0))
-    if observed_maximum_alpha > allowed_maximum:
+    if observed_maximum_alpha > int(math.ceil(maximum_alpha * 255.0)):
         raise RuntimeError(f"{name}: alpha exceeds configured bucket maximum")
     if nonzero_alpha < WIDTH * HEIGHT * 0.10:
         raise RuntimeError(f"{name}: texture contains too little visible structure")
@@ -173,20 +166,24 @@ def validate_pixels(name: str, pixels: bytes, maximum_alpha: float) -> None:
 
 
 def make_obj(path: Path, texture_name: str) -> None:
+    # Two separately culled faces with opposite normals avoid dark back-face
+    # lighting while retaining standard alpha blending from the daytime texture.
     vertices = [
         (-0.5, -0.5, 0.0, 0.0, 0.0, -1.0, 0.0, 0.0),
         (0.5, -0.5, 0.0, 0.0, 0.0, -1.0, 1.0, 0.0),
         (0.5, 0.5, 0.0, 0.0, 0.0, -1.0, 1.0, 1.0),
         (-0.5, 0.5, 0.0, 0.0, 0.0, -1.0, 0.0, 1.0),
+        (-0.5, -0.5, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0),
+        (0.5, -0.5, 0.0, 0.0, 0.0, 1.0, 1.0, 0.0),
+        (0.5, 0.5, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0),
+        (-0.5, 0.5, 0.0, 0.0, 0.0, 1.0, 0.0, 1.0),
     ]
-    indices = [0, 2, 1, 0, 3, 2]
+    indices = [0, 2, 1, 0, 3, 2, 4, 5, 6, 4, 6, 7]
     lines = [
         "I",
         "800",
         "OBJ",
         f"TEXTURE {texture_name}",
-        f"TEXTURE_LIT {texture_name}",
-        f"GLOBAL_luminance {LUMINANCE_NITS}",
         "GLOBAL_no_shadow",
         "GLOBAL_specular 0.0",
         f"POINT_COUNTS {len(vertices)} 0 0 {len(indices)}",
@@ -202,10 +199,8 @@ def make_obj(path: Path, texture_name: str) -> None:
             "ANIM_scale 0.001 1 1 32 1 1 0 32 ffatmo/contrail_debug/width",
             "ANIM_begin",
             "ANIM_scale 1 0.001 1 1 32 1 0 32 ffatmo/contrail_debug/length",
-            "ATTR_no_cull",
             "ATTR_blend",
             "ATTR_no_shadow",
-            f"ATTR_emission_rgb {EMISSION_RGB}",
             f"TRIS 0 {len(indices)}",
             "ANIM_end",
             "ANIM_end",
@@ -229,14 +224,14 @@ def validate_obj(path: Path, texture_name: str) -> None:
     if sum(1 for line in lines if line.startswith("TRIS ")) != 1:
         raise RuntimeError(f"{path.name}: expected exactly one TRIS command")
     if f"TEXTURE {texture_name}" not in lines:
-        raise RuntimeError(f"{path.name}: expected albedo texture reference is missing")
-    if f"TEXTURE_LIT {texture_name}" not in lines:
-        raise RuntimeError(f"{path.name}: expected neutral lit texture reference is missing")
-    if f"GLOBAL_luminance {LUMINANCE_NITS}" not in lines:
-        raise RuntimeError(f"{path.name}: expected v4.4 luminance directive is missing")
-    if f"ATTR_emission_rgb {EMISSION_RGB}" not in lines:
-        raise RuntimeError(f"{path.name}: expected v4.4 neutral emission override is missing")
-    if "ATTR_no_cull" not in lines or "ATTR_blend" not in lines or "ATTR_no_shadow" not in lines:
+        raise RuntimeError(f"{path.name}: albedo texture reference is missing")
+    if any(line.startswith(("TEXTURE_LIT", "GLOBAL_luminance", "ATTR_emission_rgb")) for line in lines):
+        raise RuntimeError(f"{path.name}: emissive/LIT state must not be present")
+    if "POINT_COUNTS 8 0 0 12" not in lines:
+        raise RuntimeError(f"{path.name}: expected matched front/back faces")
+    if "ATTR_no_cull" in lines:
+        raise RuntimeError(f"{path.name}: no-cull path can expose dark back-face lighting")
+    if "ATTR_blend" not in lines or "ATTR_no_shadow" not in lines:
         raise RuntimeError(f"{path.name}: required transparency attributes are missing")
     if not any("ffatmo/contrail_debug/width" in line for line in lines):
         raise RuntimeError(f"{path.name}: width dataref scale is missing")
@@ -253,8 +248,6 @@ def main() -> int:
     generated = []
     for bucket, maximum_alpha in enumerate(ALPHA_LEVELS):
         for variant_index, variant in enumerate(VARIANTS):
-            # Keep the legacy filename expected by the current XPLM instance
-            # loader; the contents are v4.4 composite assets, not core assets.
             stem = f"contrail_core_{bucket}_{variant}"
             texture_name = f"{stem}.png"
             object_name = f"{stem}.obj"
@@ -268,10 +261,11 @@ def main() -> int:
             generated.extend((texture_name, object_name))
 
     (args.output / "ASSET_INFO.txt").write_text(
-        "FFAtmo Renderer Foundation v4.4 deterministic single-layer composite asset set.\n"
-        "A dense white centre and feathered halo are baked into one continuous alpha profile.\n"
-        "No separate core object is rendered, preventing transparent depth/sorting cut-outs.\n"
-        f"Neutral daytime luminance: {LUMINANCE_NITS} nits.\n"
+        "FFAtmo Renderer Foundation v4.6 deterministic albedo-only single-layer composite asset set.\n"
+        "The white cloud RGBA texture is used only as the daytime albedo texture.\n"
+        "No TEXTURE_LIT, GLOBAL_luminance or deprecated emission state is present.\n"
+        "Matched front/back faces carry opposite normals so the camera never sees a dark back face.\n"
+        "No separate core object is rendered.\n"
         "Eight assets: four optical buckets and two deterministic variants.\n"
         "Legacy contrail_core filenames are retained for loader compatibility only.\n"
         + "\n".join(generated)

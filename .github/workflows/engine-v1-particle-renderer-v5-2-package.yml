@@ -8,12 +8,18 @@ on:
     paths:
       - "tools/generate_particle_renderer_v5_2_1_colour_diagnostic.py"
       - ".github/workflows/engine-v1-particle-renderer-v5-2-package.yml"
+  pull_request:
+    branches:
+      - engine/v1
+    paths:
+      - "tools/generate_particle_renderer_v5_2_1_colour_diagnostic.py"
+      - ".github/workflows/engine-v1-particle-renderer-v5-2-package.yml"
 
 permissions:
   contents: read
 
 concurrency:
-  group: ffatmo-renderer-v521-colour-diagnostic
+  group: ffatmo-renderer-v521-colour-diagnostic-${{ github.event.pull_request.number || github.ref_name }}
   cancel-in-progress: true
 
 jobs:

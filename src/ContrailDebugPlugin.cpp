@@ -62,8 +62,10 @@ public:
         renderPlannerSettings_.heatHandoffFullSeconds = 0.05f;
         renderPlannerSettings_.maximumCoreAgeSeconds = 22.0f;
         renderPlannerSettings_.maximumSelectedSpacingM = 45.0;
-        renderPlannerSettings_.assetCapacities.fill(
-            ContrailParticleRenderer::kInstancesPerAsset);
+        // The particle renderer consumes the youngest sample per
+        // engine, while the full wake plan remains available for v5.3
+        // swirl/handoff diagnostics.
+        renderPlannerSettings_.assetCapacities.fill(512);
     }
 
     bool start() {
@@ -71,7 +73,7 @@ public:
         reportPath_ = pluginRoot_ / "reports" / "contrail_visual_debug.txt";
         profileService_ = std::make_unique<acf::AcfProfileService>();
         createCommandsAndMenu();
-        log("Started. Renderer Foundation v5.0 uses atmosphere-conditioned "
+        log("Started. Renderer Foundation v5.2 uses atmosphere-conditioned "
             "cooling and nucleation with continuity-first trail planning.\n");
         return true;
     }
@@ -86,7 +88,7 @@ public:
             return false;
         }
         if (!worldRenderer_.start(pluginRoot_ / "assets")) {
-            log("Could not start Renderer Foundation v5.0. Check the eight assets folder.\n");
+            log("Could not start Renderer Foundation v5.2. Check the native particle assets folder.\n");
             overlay_.stop();
             return false;
         }
@@ -320,10 +322,10 @@ private:
         geometryStatus_ = "ACF EXHAUSTS: " +
             std::to_string(engineExhaustBodyOffsets_.size());
         if (b738Profile) geometryStatus_ += " | B738 WAKE";
-        log("Renderer v5.0 exhaust and wake geometry ready for " +
+        log("Renderer v5.2 exhaust and wake geometry ready for " +
             result->profile.aircraftName + ": " +
             std::to_string(engineExhaustBodyOffsets_.size()) + " engines.\n");
-        XPLMSpeakString("FF Atmo Renderer v5 point 0 geometry ready");
+        XPLMSpeakString("FF Atmo Renderer v5 point 2 geometry ready");
     }
 
     bool applyAtmosphereMode(engine::SimulatorSnapshot& snapshot,
@@ -506,7 +508,7 @@ private:
         status.mode = modeName(atmosphereMode_);
         status.geometryStatus = geometryStatus_;
         status.rendererStatus = worldRenderer_.ready() ?
-            "WORLD V5.0 READY" : "LOADING V5.0 ASSETS";
+            "WORLD V5.2 READY" : "LOADING V5.2 ASSETS";
         status.activeParcels = liveEngine_.parcels().size();
         status.emittedParcels = liveEngine_.summary().emittedParcelCount;
         status.expiredParcels = liveEngine_.summary().expiredParcelCount;
@@ -534,7 +536,7 @@ private:
 
         const auto& summary = liveEngine_.summary();
         const auto& planner = latestRenderPlan_.statistics;
-        stream << "FFAtmo World Contrail Visual Debug Report v5.0\n"
+        stream << "FFAtmo World Contrail Visual Debug Report v5.2\n"
                << "status=" << (summary.ok ? "OK" : "ERROR") << '\n'
                << "error=" << summary.error << '\n'
                << "aircraft_name=" << snapshotSource_.aircraftName() << '\n'
@@ -631,8 +633,8 @@ private:
                << "deterministic_hash=0x" << std::setw(16)
                << summary.deterministicHash << '\n';
 
-        log("Renderer v5.0 report written to: " + reportPath_.string() + "\n");
-        XPLMSpeakString("FF Atmo Renderer v5 point 0 report exported");
+        log("Renderer v5.2 report written to: " + reportPath_.string() + "\n");
+        XPLMSpeakString("FF Atmo Renderer v5 point 2 report exported");
     }
 
     void cycleAtmosphereMode() {
@@ -719,7 +721,7 @@ private:
             self->visualEnabled_ = !self->visualEnabled_;
             self->overlay_.setEnabled(self->visualEnabled_);
             self->worldRenderer_.setEnabled(self->visualEnabled_);
-            log(std::string("Renderer v5.0 visuals ") +
+            log(std::string("Renderer v5.2 visuals ") +
                 (self->visualEnabled_ ? "enabled.\n" : "disabled.\n"));
         } else if (command == self->toggleSimulationCommand_) {
             self->simulationEnabled_ = !self->simulationEnabled_;
@@ -743,7 +745,7 @@ private:
     void createCommandsAndMenu() {
         toggleOverlayCommand_ = XPLMCreateCommand(
             "ffatmo_contrail_debug/toggle_overlay",
-            "Toggle FFAtmo Renderer v5.0 visuals and status overlay");
+            "Toggle FFAtmo Renderer v5.2 visuals and status overlay");
         toggleSimulationCommand_ = XPLMCreateCommand(
             "ffatmo_contrail_debug/toggle_simulation",
             "Enable or disable live contrail physics");
@@ -779,7 +781,7 @@ private:
             nullptr,
             nullptr);
         XPLMAppendMenuItemWithCommand(
-            menu_, "Renderer v5.0 Visuals + Status: ON / OFF", toggleOverlayCommand_);
+            menu_, "Renderer v5.2 Visuals + Status: ON / OFF", toggleOverlayCommand_);
         XPLMAppendMenuItemWithCommand(
             menu_, "Simulation: ON / OFF", toggleSimulationCommand_);
         XPLMAppendMenuItemWithCommand(
@@ -866,7 +868,7 @@ PLUGIN_API int XPluginStart(char* outName,
         outDescription,
         256,
         "%s",
-        "Renderer Foundation v5.0 native ribbon-particle proof with B738 cooling and wake physics");
+        "Renderer Foundation v5.2 native ribbon-particle proof with B738 cooling and wake physics");
     return ffatmo::gRuntime.start() ? 1 : 0;
 }
 

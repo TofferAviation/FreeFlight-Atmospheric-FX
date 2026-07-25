@@ -18,7 +18,7 @@
 
 namespace ffatmo {
 
-// Renderer Foundation v5.0.1 safe-start proof.
+// Renderer Foundation v5.2 safe-start proof.
 //
 // The particle OBJ is deliberately NOT loaded from XPluginStart/XPluginEnable.
 // start() only registers instance datarefs and arms the renderer. The tiny OBJ
@@ -29,7 +29,7 @@ class ContrailParticleRenderer {
 public:
     static constexpr std::size_t kAssetCount = 1;
     static constexpr std::size_t kInstancesPerAsset = 2;
-    static constexpr std::size_t kVisibleCapacity = 1536;
+    static constexpr std::size_t kVisibleCapacity = 4096;
     static constexpr std::size_t kDiagnosticAssetCount =
         render::kContrailRenderAssetCount;
 
@@ -64,20 +64,20 @@ public:
 
         if (!rateDataRef_ || !sizeDataRef_ ||
             !alphaDataRef_ || !lifetimeDataRef_) {
-            log("Could not register Renderer v5.0.1 particle instance datarefs.\n");
+            log("Could not register Renderer v5.2 particle instance datarefs.\n");
             stop();
             return false;
         }
 
         if (!std::filesystem::exists(objectPath_)) {
-            log("Missing Renderer v5.0.1 particle asset: " +
+            log("Missing Renderer v5.2 particle asset: " +
                 objectPath_.string() + "\n");
             stop();
             return false;
         }
 
         running_ = true;
-        log("Renderer v5.0.1 armed; particle OBJ load is deferred until live trail samples exist.\n");
+        log("Renderer v5.2 armed; particle OBJ load is deferred until live trail samples exist.\n");
         return true;
     }
 
@@ -135,16 +135,16 @@ public:
                 loadAttempted_ = true;
                 object_ = XPLMLoadObject(objectPath_.string().c_str());
                 if (!object_) {
-                    log("Renderer v5.0.1 could not load the deferred particle OBJ.\n");
+                    log("Renderer v5.2 could not load the deferred particle OBJ.\n");
                     return;
                 }
 
                 loadedObjectCount_ = 1;
                 createInstances();
                 if (ready()) {
-                    log("Renderer v5.0.1 native ribbon emitters loaded after the safe-start gate.\n");
+                    log("Renderer v5.2 native ribbon emitters loaded after the safe-start gate.\n");
                 } else {
-                    log("Renderer v5.0.1 could not create both particle emitter instances.\n");
+                    log("Renderer v5.2 could not create both particle emitter instances.\n");
                 }
             }
 
@@ -346,19 +346,23 @@ private:
         drawInfo.heading = 0.0f;
         drawInfo.roll = 0.0f;
 
+        // v5.2 keeps the proven single native ribbon, but gives the
+        // formation zone enough width and optical weight to read as ice
+        // cloud rather than a thin wire. All controls stay inside the
+        // normalized 0..1 particle-dataref domain.
         const float normalizedSize = std::clamp(
-            sample.widthM / 4.0f,
-            0.08f,
-            1.0f);
+            0.68f + sample.widthM / 9.0f,
+            0.68f,
+            0.98f);
         const float normalizedAlpha = std::clamp(
-            0.38f + sample.opacityStrength * 2.5f,
-            0.38f,
-            1.0f);
+            0.70f + sample.opacityStrength * 1.35f,
+            0.70f,
+            0.96f);
         const float values[] = {
             1.0f,
             normalizedSize,
             normalizedAlpha,
-            0.55f
+            0.78f
         };
 
         XPLMInstanceSetPosition(

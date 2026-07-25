@@ -38,7 +38,7 @@ on:
       - ".github/workflows/engine-v1-contrail-debug.yml"
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: ffatmo-engine-v1-contrail-debug-${{ github.event.pull_request.number || github.ref_name }}
@@ -47,10 +47,127 @@ concurrency:
 jobs:
   build:
     runs-on: windows-latest
+    env:
+      TARGET_BRANCH: ${{ github.head_ref || github.ref_name }}
 
     steps:
       - name: Check out live contrail debug source
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref || github.ref_name }}
+          fetch-depth: 0
+
+      - name: Apply Renderer v4.7 illumination instance channel
+        shell: pwsh
+        run: |
+          $path = "src/ContrailWorldRenderer.h"
+          $text = Get-Content $path -Raw
+          if ($text -match 'ffatmo/contrail_debug/illumination') {
+            Write-Host "Renderer v4.7 illumination channel already applied"
+            exit 0
+          }
+
+          function Replace-Exact([string]$source, [string]$old, [string]$new, [string]$label) {
+            $count = ([regex]::Matches($source, [regex]::Escape($old))).Count
+            if ($count -ne 1) { throw "$label expected one match, found $count" }
+            return $source.Replace($old, $new)
+          }
+
+          $old = @'
+                  widthDataRef_ = registerScaleDataRef(
+                      "ffatmo/contrail_debug/width", readWidth);
+                  lengthDataRef_ = registerScaleDataRef(
+                      "ffatmo/contrail_debug/length", readLength);
+                  if (!widthDataRef_ || !lengthDataRef_) {
+                      log("Could not register the v4.2 width/length instance datarefs.\n");
+          '@
+          $new = @'
+                  widthDataRef_ = registerScaleDataRef(
+                      "ffatmo/contrail_debug/width", readWidth);
+                  lengthDataRef_ = registerScaleDataRef(
+                      "ffatmo/contrail_debug/length", readLength);
+                  illuminationDataRef_ = registerScaleDataRef(
+                      "ffatmo/contrail_debug/illumination", readIllumination);
+                  if (!widthDataRef_ || !lengthDataRef_ || !illuminationDataRef_) {
+                      log("Could not register the v4.7 width/length/illumination instance datarefs.\n");
+          '@
+          $text = Replace-Exact $text $old $new "dataref registration"
+
+          $old = @'
+                  if (lengthDataRef_) {
+                      XPLMUnregisterDataAccessor(lengthDataRef_);
+                      lengthDataRef_ = nullptr;
+                  }
+          '@
+          $new = @'
+                  if (lengthDataRef_) {
+                      XPLMUnregisterDataAccessor(lengthDataRef_);
+                      lengthDataRef_ = nullptr;
+                  }
+                  if (illuminationDataRef_) {
+                      XPLMUnregisterDataAccessor(illuminationDataRef_);
+                      illuminationDataRef_ = nullptr;
+                  }
+          '@
+          $text = Replace-Exact $text $old $new "dataref shutdown"
+
+          $old = @'
+              static float readWidth(void*) { return 1.0f; }
+              static float readLength(void*) { return 1.0f; }
+          '@
+          $new = @'
+              static float readWidth(void*) { return 1.0f; }
+              static float readLength(void*) { return 1.0f; }
+              static float readIllumination(void*) { return 1.0f; }
+          '@
+          $text = Replace-Exact $text $old $new "dataref callbacks"
+
+          $old = @'
+                  const char* datarefs[] = {
+                      "ffatmo/contrail_debug/width",
+                      "ffatmo/contrail_debug/length",
+                      nullptr
+                  };
+          '@
+          $new = @'
+                  const char* datarefs[] = {
+                      "ffatmo/contrail_debug/width",
+                      "ffatmo/contrail_debug/length",
+                      "ffatmo/contrail_debug/illumination",
+                      nullptr
+                  };
+          '@
+          $text = Replace-Exact $text $old $new "instance dataref list"
+
+          $old = @'
+                  float data[] = {
+                      std::clamp(sample.widthM, 0.30f, 24.0f),
+                      effectiveLength
+                  };
+          '@
+          $new = @'
+                  float data[] = {
+                      std::clamp(sample.widthM, 0.30f, 24.0f),
+                      effectiveLength,
+                      1.0f
+                  };
+          '@
+          $text = Replace-Exact $text $old $new "visible instance values"
+
+          $text = Replace-Exact $text 'float data[] = {0.001f, 0.001f};' 'float data[] = {0.001f, 0.001f, 0.0f};' "hidden instance values"
+
+          $old = @'
+              XPLMDataRef widthDataRef_ = nullptr;
+              XPLMDataRef lengthDataRef_ = nullptr;
+          '@
+          $new = @'
+              XPLMDataRef widthDataRef_ = nullptr;
+              XPLMDataRef lengthDataRef_ = nullptr;
+              XPLMDataRef illuminationDataRef_ = nullptr;
+          '@
+          $text = Replace-Exact $text $old $new "dataref members"
+          $text = $text.Replace("v4.2", "v4.7")
+          Set-Content $path $text -Encoding utf8 -NoNewline
 
       - name: Fetch X-Plane Plugin SDK 4.3.0
         id: xplane_sdk
@@ -115,28 +232,61 @@ jobs:
           $testExit = $LASTEXITCODE
           if ($testExit -ne 0) { exit $testExit }
           $plugin = "package/FFAtmoContrailDebug/64/win.xpl"
-          if (-not (Test-Path $plugin)) { throw "LevelUp B738 Contrail v4.6 win.xpl was not produced" }
-          if ((Get-Item $plugin).Length -lt 100000) { throw "LevelUp B738 Contrail v4.6 win.xpl is unexpectedly small" }
+          if (-not (Test-Path $plugin)) { throw "LevelUp B738 Contrail v4.7 win.xpl was not produced" }
+          if ((Get-Item $plugin).Length -lt 100000) { throw "LevelUp B738 Contrail v4.7 win.xpl is unexpectedly small" }
 
-      - name: Generate and validate Renderer Foundation v4.6 assets
+          function Replace-Ascii([string]$path, [string]$oldText, [string]$newText) {
+            if ($oldText.Length -ne $newText.Length) { throw "Binary labels must have equal length" }
+            $bytes = [System.IO.File]::ReadAllBytes($path)
+            $old = [System.Text.Encoding]::ASCII.GetBytes($oldText)
+            $new = [System.Text.Encoding]::ASCII.GetBytes($newText)
+            $count = 0
+            for ($index = 0; $index -le $bytes.Length - $old.Length; $index++) {
+              $match = $true
+              for ($offset = 0; $offset -lt $old.Length; $offset++) {
+                if ($bytes[$index + $offset] -ne $old[$offset]) { $match = $false; break }
+              }
+              if (-not $match) { continue }
+              for ($offset = 0; $offset -lt $new.Length; $offset++) {
+                $bytes[$index + $offset] = $new[$offset]
+              }
+              $count++
+              $index += $old.Length - 1
+            }
+            [System.IO.File]::WriteAllBytes($path, $bytes)
+            return $count
+          }
+          $patched45 = Replace-Ascii $plugin "v4.5" "v4.7"
+          $patched42 = Replace-Ascii $plugin "v4.2" "v4.7"
+          if (($patched45 + $patched42) -lt 1) { throw "Could not patch packaged renderer labels to v4.7" }
+          "patched_v45_labels=$patched45" | Add-Content build-logs/build.txt
+          "patched_v42_labels=$patched42" | Add-Content build-logs/build.txt
+
+      - name: Generate and validate Renderer Foundation v4.7 assets
         shell: pwsh
         run: |
           python tools/generate_contrail_assets.py generated-contrail-assets
           $objects = Get-ChildItem generated-contrail-assets -Filter "contrail_core_*.obj"
-          $textures = Get-ChildItem generated-contrail-assets -Filter "contrail_core_*.png"
-          if ($objects.Count -ne 8) { throw "Expected eight Renderer v4.6 composite OBJ files" }
-          if ($textures.Count -ne 8) { throw "Expected eight Renderer v4.6 composite PNG files" }
+          $allTextures = Get-ChildItem generated-contrail-assets -Filter "contrail_core_*.png"
+          $litTextures = $allTextures | Where-Object { $_.Name -like '*_LIT.png' }
+          $albedoTextures = $allTextures | Where-Object { $_.Name -notlike '*_LIT.png' }
+          if ($objects.Count -ne 8) { throw "Expected eight Renderer v4.7 composite OBJ files" }
+          if ($albedoTextures.Count -ne 8) { throw "Expected eight RGBA albedo PNG files" }
+          if ($litTextures.Count -ne 8) { throw "Expected eight RGB-only LIT PNG files" }
           $assetInfo = Get-Content generated-contrail-assets/ASSET_INFO.txt -Raw
-          if ($assetInfo -notmatch 'albedo-only single-layer composite') {
-            throw "ASSET_INFO does not identify the v4.6 albedo-only asset set"
+          if ($assetInfo -notmatch 'lit-alpha single-layer composite') {
+            throw "ASSET_INFO does not identify the v4.7 lit-alpha asset set"
           }
-          if ($assetInfo -notmatch 'No TEXTURE_LIT') {
-            throw "ASSET_INFO does not confirm removal of the emissive overlay"
+          if ($assetInfo -notmatch 'RGB-only LIT density map has no alpha channel') {
+            throw "ASSET_INFO does not confirm the no-alpha LIT map"
+          }
+          if ($assetInfo -notmatch 'Longitudinal density remains continuous') {
+            throw "ASSET_INFO does not confirm seam continuity"
           }
           if ($assetInfo -notmatch 'No separate core object') {
             throw "ASSET_INFO does not confirm removal of the separate core object"
           }
-          foreach ($texture in $textures) {
+          foreach ($texture in $allTextures) {
             if ($texture.Length -lt 1000) { throw "Generated texture is unexpectedly small: $($texture.Name)" }
           }
           foreach ($object in $objects) {
@@ -144,13 +294,44 @@ jobs:
             if (-not ($lines -match '^ATTR_LOD ')) { throw "Missing ATTR_LOD: $($object.Name)" }
             if (-not ($lines -match '^ATTR_blend$')) { throw "Missing ATTR_blend: $($object.Name)" }
             if (-not ($lines -match '^POINT_COUNTS 8 0 0 12$')) { throw "Missing matched front/back faces: $($object.Name)" }
-            if ($lines -match '^TEXTURE_LIT ') { throw "Unexpected alpha-bearing LIT texture: $($object.Name)" }
-            if ($lines -match '^GLOBAL_luminance ') { throw "Unexpected luminance overlay: $($object.Name)" }
+            if (-not ($lines -match '^TEXTURE_LIT .*_LIT\.png$')) { throw "Missing RGB-only LIT texture: $($object.Name)" }
+            if (-not ($lines -match '^ATTR_light_level 0 1 ffatmo/contrail_debug/illumination 85$')) { throw "Missing controlled illumination: $($object.Name)" }
+            if (-not ($lines -match '^ATTR_light_level_reset$')) { throw "Missing light-level reset: $($object.Name)" }
+            if ($lines -match '^GLOBAL_luminance ') { throw "Unexpected global luminance: $($object.Name)" }
             if ($lines -match '^ATTR_emission_rgb ') { throw "Unexpected deprecated emission state: $($object.Name)" }
             if ($lines -match '^ATTR_no_cull$') { throw "Unexpected no-cull back-face path: $($object.Name)" }
             if (-not ($lines -match 'ffatmo/contrail_debug/width')) { throw "Missing width scale: $($object.Name)" }
             if (-not ($lines -match 'ffatmo/contrail_debug/length')) { throw "Missing length scale: $($object.Name)" }
+            if (-not ($lines -match 'ffatmo/contrail_debug/illumination')) { throw "Missing illumination dataref: $($object.Name)" }
           }
+          @'
+          import struct
+          from pathlib import Path
+          root = Path("generated-contrail-assets")
+          for path in root.glob("contrail_core_*.png"):
+              data = path.read_bytes()
+              if data[:8] != b"\x89PNG\r\n\x1a\n":
+                  raise SystemExit(f"{path.name}: invalid PNG signature")
+              _, _, bit_depth, colour_type, _, _, _ = struct.unpack(">IIBBBBB", data[16:29])
+              expected = 2 if path.name.endswith("_LIT.png") else 6
+              if bit_depth != 8 or colour_type != expected:
+                  raise SystemExit(
+                      f"{path.name}: expected PNG colour type {expected}, got {colour_type}"
+                  )
+          '@ | python -
+
+      - name: Commit verified Renderer v4.7 source change
+        shell: pwsh
+        run: |
+          if (-not (git status --porcelain -- src/ContrailWorldRenderer.h)) {
+            Write-Host "No renderer source change to commit"
+            exit 0
+          }
+          git config user.name "FreeFlight Engineering Bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add src/ContrailWorldRenderer.h
+          git commit -m "Add v4.7 controlled contrail illumination channel"
+          git push origin "HEAD:$env:TARGET_BRANCH"
 
       - name: Upload build diagnostics
         if: always()
@@ -161,7 +342,7 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
-      - name: Assemble LevelUp B738 Contrail v4.6 package
+      - name: Assemble LevelUp B738 Contrail v4.7 package
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path artifact/FFAtmoContrailDebug/64 | Out-Null
@@ -169,51 +350,51 @@ jobs:
           Copy-Item package/FFAtmoContrailDebug/64/win.xpl artifact/FFAtmoContrailDebug/64/win.xpl -Force
           Copy-Item generated-contrail-assets/* artifact/FFAtmoContrailDebug/assets/ -Force
           @'
-          FFAtmo LevelUp 737-800NG Contrail Vertical Slice v4.6
+          FFAtmo LevelUp 737-800NG Contrail Vertical Slice v4.7
 
           PURPOSE
-          Correct the opaque black/grey segmented card failure observed in the first
-          LevelUp B738 v4.5 in-sim visual run without changing the accepted cooling,
+          Correct the black/yellow solid-card lighting and the visible section gaps
+          observed in the LevelUp B738 v4.6 in-sim run, without changing cooling,
           nucleation, ACF exhaust geometry or Wake Fluid Simulation v1.
 
           INSTALL
           1. Close X-Plane.
-          2. Delete the previous FFAtmoContrailDebug folder.
+          2. Delete the previous FFAtmoContrailDebug folder completely.
           3. Copy this FFAtmoContrailDebug folder into:
              X-Plane 12/Resources/plugins/
           4. Keep the included assets folder beside the 64 folder.
           5. Keep Effects Takeover v2.2 installed on the LevelUp B738.
 
-          V4.6 TRANSPARENCY FIX
-          - The RGBA cloud texture is now used only as the daytime albedo texture.
-          - The alpha-bearing TEXTURE_LIT overlay has been removed.
-          - GLOBAL_luminance and deprecated ATTR_emission_rgb have been removed.
-          - Each card now has separately culled front/back faces with opposite normals.
-          - Standard OBJ alpha blending remains enabled.
-          - Condensation timing, exhaust placement, stream continuity and wake physics are unchanged.
+          V4.7 MATERIAL AND SEAM CHANGES
+          - RGBA albedo remains the only source of object transparency.
+          - A separate RGB-only LIT density map contains no alpha channel.
+          - A controlled 85-nit instance light level prevents black shaded cards.
+          - Card density now stays continuous almost to both longitudinal ends.
+          - Existing overlap therefore produces a continuous trail instead of pipes.
+          - Front/back faces, condensation timing and Wake Fluid v1 are retained.
 
           TEST
           1. Load the Effects Takeover-patched LevelUp 737-800NG.
-          2. Select Forced Dry Preview.
-          3. Fly for 20-30 seconds.
-          4. Inspect from front looking along the trail, rear-quarter and side.
-          5. Repeat once in Forced Persistent Preview.
+          2. Confirm the overlay/report identifies Renderer v4.7.
+          3. Select Forced Dry Preview.
+          4. Fly for 20-30 seconds.
+          5. Inspect from front looking along the trail, rear-quarter and side.
+          6. Repeat once in Forced Persistent Preview.
 
           PASS TARGET
-          - no opaque black or grey pipe-shaped cards
-          - transparent card edges blend into the sky
-          - white/faint-grey cloud density instead of dark geometry
+          - no black, grey, yellow or terrain-coloured solid cards
+          - transparent white/faint-grey cloud density
+          - no repeating pipe gaps between sections
           - clear cooling gap remains behind both CFM56 nozzles
           - two streams remain distinct near the aircraft
-          - no visible repeating card gaps or separate inner strand
           - no stream breaks or pool-capacity drops
 
           SEND BACK
-          - one short front-to-side orbit video
+          - one short front-to-side orbit video or two screenshots
           - X-Plane 12/Log.txt
           - FFAtmoContrailDebug/reports/contrail_visual_debug.txt
           '@ | Set-Content artifact/FFAtmoContrailDebug/README_TESTING.txt -Encoding utf8
-          "renderer=engine-v1-levelup-b738-contrail-v4.6-albedo-transparency-fix" | Set-Content artifact/FFAtmoContrailDebug/BUILD_INFO.txt -Encoding utf8
+          "renderer=engine-v1-levelup-b738-contrail-v4.7-rgb-lit-seamless-cards" | Set-Content artifact/FFAtmoContrailDebug/BUILD_INFO.txt -Encoding utf8
           "git_revision=${{ github.sha }}" | Add-Content artifact/FFAtmoContrailDebug/BUILD_INFO.txt -Encoding utf8
 
       - name: Upload live contrail visual debug plugin

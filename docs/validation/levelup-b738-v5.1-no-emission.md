@@ -17,7 +17,9 @@ The X-Plane log also confirmed that the v5.1.1 particle OBJ loaded after the saf
 
 ## Conclusion
 
-The regression is isolated to the v5.1 particle asset definition. The mixed two-cell asset combined a ribbon particle and billboard particle as two sub-emitters under the same streaming emitter. X-Plane accepted and instantiated the object but produced no visible particles in X-Plane 12.4.3.
+The regression is isolated to the v5.1 particle asset definition. The mixed two-cell asset combined a ribbon particle and billboard particle as two sub-emitters under the same streaming emitter. X-Plane accepted and instantiated the object but produced no visible particles in this X-Plane 12.4.3 run.
+
+X-Plane supports multiple sub-emitters in general, so this test does not prove that all mixed sub-emitter configurations are unsupported. It proves only that this specific mixed ribbon/billboard asset path is not a safe production baseline for FFAtmo yet.
 
 ## v5.1.2 correction
 

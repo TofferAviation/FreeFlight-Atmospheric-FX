@@ -1,4 +1,4 @@
-name: Build Renderer Foundation v5.5 Parcel Clusters
+name: Build Renderer Foundation v5.5.1 Visibility Hotfix
 
 on:
   workflow_dispatch:
@@ -10,6 +10,7 @@ on:
       - "src/ContrailDebugPlugin.cpp"
       - "tools/patch_v5_4_1_runtime.py"
       - "tools/patch_v5_5_parcel_clusters.py"
+      - "tools/patch_v5_5_1_visibility.py"
       - "tools/generate_particle_renderer_v5_4_1_assets.py"
       - ".github/workflows/engine-v1-particle-renderer-v5-5.yml"
   pull_request:
@@ -20,6 +21,7 @@ on:
       - "src/ContrailDebugPlugin.cpp"
       - "tools/patch_v5_4_1_runtime.py"
       - "tools/patch_v5_5_parcel_clusters.py"
+      - "tools/patch_v5_5_1_visibility.py"
       - "tools/generate_particle_renderer_v5_4_1_assets.py"
       - ".github/workflows/engine-v1-particle-renderer-v5-5.yml"
 
@@ -27,7 +29,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: ffatmo-renderer-v55-${{ github.event.pull_request.number || github.ref_name }}
+  group: ffatmo-renderer-v551-${{ github.event.pull_request.number || github.ref_name }}
   cancel-in-progress: true
 
 jobs:
@@ -40,21 +42,12 @@ jobs:
         with:
           ref: agent/levelup-particle-renderer-v5
 
-      - name: Apply v5.5 parcel-cluster runtime
+      - name: Apply v5.5.1 parcel-cluster visibility runtime
         shell: pwsh
         run: |
-          $path = "tools/patch_v5_5_parcel_clusters.py"
-          $patcher = Get-Content $path -Raw
-          $patcher = $patcher.Replace(
-            '    update_replacement + "\n    void setEnabled",',
-            '    lambda _: update_replacement + "\n    void setEnabled",')
-          $patcher = $patcher.Replace(
-            '    set_billboard_replacement + "\n    void hideInstance",',
-            '    lambda _: set_billboard_replacement + "\n    void hideInstance",')
-          Set-Content $path $patcher -Encoding utf8 -NoNewline
-
           python tools/patch_v5_4_1_runtime.py
           python tools/patch_v5_5_parcel_clusters.py
+          python tools/patch_v5_5_1_visibility.py
 
           $renderer = Get-Content src/ContrailParticleRenderer.h -Raw
           $plugin = Get-Content src/ContrailDebugPlugin.cpp -Raw
@@ -63,11 +56,11 @@ jobs:
           if ($renderer -notmatch 'sample\.sourceParcelId') { throw "Parcel anchoring is missing" }
           if ($renderer -notmatch 'struct CloudNode') { throw "Cloud cluster structure is missing" }
           if ($renderer -notmatch 'companions') { throw "Developing-wake companion layer is missing" }
-          if ($renderer -notmatch '5\.0f && anchor\.ageSeconds <= 20\.0f') { throw "Controlled swirl age band is missing" }
-          if ($renderer -notmatch '2\.5f\);') { throw "Swirl-radius clamp is missing" }
+          if ($renderer -notmatch '0\.095f \+ std::sqrt\(anchor\.opacityStrength\) \* 0\.50f') { throw "Primary visibility calibration is missing" }
+          if ($renderer -notmatch 'agreement < 0\.0') { throw "Tangent reversal guard is missing" }
           if ($renderer -match 'BILLBOARD_MODE RIBBON') { throw "Ribbon mode returned" }
           if ($plugin -notmatch 'visibleCapacity = 4096') { throw "Full wake planner capacity is missing" }
-          if ($plugin -notmatch 'WORLD V5\.5 READY') { throw "v5.5 overlay label is missing" }
+          if ($plugin -notmatch 'WORLD V5\.5\.1 READY') { throw "v5.5.1 overlay label is missing" }
 
       - name: Fetch X-Plane Plugin SDK 4.3.0
         id: sdk
@@ -97,99 +90,84 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path build-logs | Out-Null
-          cmake -S . -B build-v55 -A x64 -DXPLANE_SDK="${{ steps.sdk.outputs.path }}" -DFFATMO_BUILD_PLUGIN=OFF -DFFATMO_BUILD_COMPANION=OFF -DFFATMO_BUILD_IMGUI_PANEL=OFF -DFFATMO_BUILD_GEOMETRY_DEBUG=OFF -DFFATMO_BUILD_RECORDER_DEBUG=OFF -DFFATMO_BUILD_CONTRAIL_DEBUG=ON -DFFATMO_BUILD_REPLAY_RUNNER=OFF -DFFATMO_BUILD_TESTS=ON -DFFATMO_GIT_REVISION="${{ github.sha }}"
+          cmake -S . -B build-v551 -A x64 -DXPLANE_SDK="${{ steps.sdk.outputs.path }}" -DFFATMO_BUILD_PLUGIN=OFF -DFFATMO_BUILD_COMPANION=OFF -DFFATMO_BUILD_IMGUI_PANEL=OFF -DFFATMO_BUILD_GEOMETRY_DEBUG=OFF -DFFATMO_BUILD_RECORDER_DEBUG=OFF -DFFATMO_BUILD_CONTRAIL_DEBUG=ON -DFFATMO_BUILD_REPLAY_RUNNER=OFF -DFFATMO_BUILD_TESTS=ON -DFFATMO_GIT_REVISION="${{ github.sha }}"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          & cmake --build build-v55 --config Release --target FFAtmoContrailDebug ffatmo_core_tests ffatmo_acf_tests ffatmo_replay_tests ffatmo_replay_runner_tests ffatmo_contrail_tests ffatmo_live_contrail_debug_tests ffatmo_contrail_render_planner_tests *> build-logs/build.txt
+          & cmake --build build-v551 --config Release --target FFAtmoContrailDebug ffatmo_core_tests ffatmo_acf_tests ffatmo_replay_tests ffatmo_replay_runner_tests ffatmo_contrail_tests ffatmo_live_contrail_debug_tests ffatmo_contrail_render_planner_tests *> build-logs/build.txt
           if ($LASTEXITCODE -ne 0) { Get-Content build-logs/build.txt; exit $LASTEXITCODE }
-          & ctest --test-dir build-v55 -C Release --output-on-failure *> build-logs/tests.txt
+          & ctest --test-dir build-v551 -C Release --output-on-failure *> build-logs/tests.txt
           if ($LASTEXITCODE -ne 0) { Get-Content build-logs/tests.txt; exit $LASTEXITCODE }
           $plugin = "package/FFAtmoContrailDebug/64/win.xpl"
-          if (-not (Test-Path $plugin)) { throw "v5.5 win.xpl was not produced" }
-          if ((Get-Item $plugin).Length -lt 100000) { throw "v5.5 win.xpl is unexpectedly small" }
+          if (-not (Test-Path $plugin)) { throw "v5.5.1 win.xpl was not produced" }
+          if ((Get-Item $plugin).Length -lt 100000) { throw "v5.5.1 win.xpl is unexpectedly small" }
 
-      - name: Generate and validate v5.5 fluffy billboard assets
+      - name: Generate and validate visible billboard assets
         shell: pwsh
         run: |
-          python tools/generate_particle_renderer_v5_4_1_assets.py generated-v55-assets
-          $obj = Get-Content generated-v55-assets/contrail_billboard.obj -Raw
-          $pssLines = Get-Content generated-v55-assets/contrail_v5_4_1_billboard.pss
+          python tools/generate_particle_renderer_v5_4_1_assets.py generated-v551-assets
+          $obj = Get-Content generated-v551-assets/contrail_billboard.obj -Raw
+          $pssLines = Get-Content generated-v551-assets/contrail_v5_4_1_billboard.pss
           if (($pssLines | Where-Object { $_.Trim() -eq 'PARTICLE' }).Count -ne 1) { throw "Expected one particle type" }
           if (($pssLines | Where-Object { $_.Trim() -eq 'SUB_EMITTER' }).Count -ne 1) { throw "Expected one sub-emitter" }
           if (($pssLines | Where-Object { $_.Trim() -eq 'BILLBOARD_MODE BILLBOARD' }).Count -ne 1) { throw "Billboard mode is missing" }
           if (($pssLines | Where-Object { $_.Trim() -eq 'BILLBOARD_MODE RIBBON' }).Count -ne 0) { throw "Ribbon mode returned" }
           if (($pssLines | Where-Object { $_.Trim() -eq 'EMIT_MODE ATTACH' }).Count -ne 1) { throw "Attach mode is missing" }
           if ($obj -match 'TRIS|TEXTURE_LIT') { throw "Legacy card material returned" }
-          if ((Get-Item generated-v55-assets/contrail_v5_4_1_cloud.png).Length -lt 5000) { throw "Cloud texture is unexpectedly small" }
-          @'
-          import struct
-          from pathlib import Path
-          path = Path("generated-v55-assets/contrail_v5_4_1_cloud.png")
-          data = path.read_bytes()
-          width, height, bit_depth, colour_type, _, _, _ = struct.unpack(">IIBBBBB", data[16:29])
-          if (width, height, bit_depth, colour_type) != (512, 512, 8, 6):
-              raise SystemExit(f"Unexpected PNG format: {(width, height, bit_depth, colour_type)}")
-          '@ | python -
+          if ((Get-Item generated-v551-assets/contrail_v5_4_1_cloud.png).Length -lt 5000) { throw "Cloud texture is unexpectedly small" }
 
-      - name: Assemble LevelUp B738 v5.5 test package
+      - name: Assemble LevelUp B738 v5.5.1 test package
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path artifact/FFAtmoContrailDebug/64 | Out-Null
           New-Item -ItemType Directory -Force -Path artifact/FFAtmoContrailDebug/assets | Out-Null
           Copy-Item package/FFAtmoContrailDebug/64/win.xpl artifact/FFAtmoContrailDebug/64/win.xpl -Force
-          Copy-Item generated-v55-assets/* artifact/FFAtmoContrailDebug/assets/ -Force
+          Copy-Item generated-v551-assets/* artifact/FFAtmoContrailDebug/assets/ -Force
           @'
-          FFAtmo LevelUp 737-800NG Renderer Foundation v5.5 Parcel-Cluster Swirl
+          FFAtmo LevelUp 737-800NG Renderer Foundation v5.5.1 Visibility Hotfix
 
           PURPOSE
-          Replace the faint cruise scribbles from v5.4.1 with stable fluffy cloud
-          clusters that follow the physical wake parcels and show controlled
-          counter-rotating development without closed artificial loops.
+          Restore visible parcel-cluster contrails while retaining the v5.5 stable
+          physical-parcel ownership and controlled companion-cloud swirl.
 
-          V5.5 CHANGES
-          - planner retains up to 4096 wake samples for complete diagnostic input
-          - temporary subdivisions are collapsed into one stable parcel anchor
-          - persistent ownership is keyed to the physical source parcel
-          - every young parcel receives one main fluffy cloud
-          - ages 5-20 seconds receive a smaller companion cloud
-          - companions rotate in opposite directions for the two engines
-          - swirl radius is capped at 2.5 metres
-          - wake centreline is smoothed with neighbouring physical parcels
-          - clouds older than 42 seconds use deterministic four-to-one LOD
-          - cooling gap, LevelUp geometry, safe start and Wake Fluid v1 retained
+          V5.5.1 CHANGES
+          - primary cloud minimum size raised to 0.9 m and maximum to 16 m
+          - primary alpha recalibrated for cruise-distance visibility
+          - developing-wake companion size and alpha increased conservatively
+          - smoothed physical parcel positions now rebuild their own tangents
+          - adjacent tangent reversals are flipped to prevent 180-degree swirl frames
+          - parcel grouping, safe start, cooling gap and Wake Fluid v1 retained
 
           TEST
-          1. Confirm WORLD V5.5 READY.
+          1. Confirm WORLD V5.5.1 READY.
           2. Use Forced Dry Preview at cruise.
-          3. Fly straight for 30 seconds.
-          4. Make one smooth 10-15 degree bank.
-          5. Inspect the near field, developing wake and old wake separately.
-          6. Export the visual-debug report.
+          3. Fly straight for 20-30 seconds.
+          4. Check the trail from behind and side-on.
+          5. Make one gentle 10-15 degree bank.
+          6. Export the report.
 
           PASS TARGET
-          - two narrow separate streams behind the CFM56 engines
-          - connected grey-white fluffy cloud body rather than thin handwriting
-          - stable puffs with high ownership reuse
-          - gentle opposite roll-up beginning several seconds behind the aircraft
-          - no closed roller-coaster loops or sharp zig-zags
-          - substantially lower capacity rejection and stream-break influence
-          - no startup crash or renderer pool drops
+          - visible grey-white primary cloud trail
+          - two separate near-field engine streams
+          - stable connected parcel clusters
+          - subtle developing counter-rotation
+          - no black particles, invisible field, closed loops or giant blobs
+          - maximum wake-turn diagnostic substantially below 180 degrees
           '@ | Set-Content artifact/FFAtmoContrailDebug/README_TESTING.txt -Encoding utf8
-          "renderer=engine-v1-levelup-b738-v5.5-parcel-cluster-swirl" | Set-Content artifact/FFAtmoContrailDebug/BUILD_INFO.txt -Encoding utf8
+          "renderer=engine-v1-levelup-b738-v5.5.1-visibility-hotfix" | Set-Content artifact/FFAtmoContrailDebug/BUILD_INFO.txt -Encoding utf8
           "git_revision=${{ github.sha }}" | Add-Content artifact/FFAtmoContrailDebug/BUILD_INFO.txt -Encoding utf8
 
       - name: Upload build diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: FFAtmo-v5.5-build-diagnostics
+          name: FFAtmo-v5.5.1-build-diagnostics
           path: build-logs
           if-no-files-found: ignore
           retention-days: 7
 
-      - name: Upload v5.5 package
+      - name: Upload v5.5.1 package
         uses: actions/upload-artifact@v4
         with:
-          name: FFAtmoContrailDebug-v5.5-win64
+          name: FFAtmoContrailDebug-v5.5.1-win64
           path: artifact/FFAtmoContrailDebug
           if-no-files-found: error
           retention-days: 14

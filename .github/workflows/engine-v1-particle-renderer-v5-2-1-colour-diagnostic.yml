@@ -1,3 +1,4 @@
+# FFAtmo v5.2.1 controlled ribbon colour-isolation build
 name: Package Renderer v5.2.1 Colour Diagnostic
 
 on:
@@ -94,9 +95,9 @@ jobs:
           lighting/blending path is turning the known-white texture black.
 
           EXPECTED LAYOUT FROM EACH ENGINE
-          TOP RED    = NORMAL blend, AMBIENT 1, DIFFUSE 1, EMISSIVE 0
+          TOP RED      = NORMAL blend, AMBIENT 1, DIFFUSE 1, EMISSIVE 0
           MIDDLE GREEN = NORMAL blend, AMBIENT 0, DIFFUSE 0, EMISSIVE 1
-          BOTTOM BLUE = ADDITIVE blend, AMBIENT 0, DIFFUSE 0, EMISSIVE 1
+          BOTTOM BLUE  = ADDITIVE blend, AMBIENT 0, DIFFUSE 0, EMISSIVE 1
 
           RESULT INTERPRETATION
           - Red visible: world-lighting path works; emissive-only setup is the issue.

@@ -19,17 +19,31 @@ def replace_required(text: str, old: str, new: str, label: str) -> str:
 def patch_renderer() -> None:
     path = Path("src/ContrailParticleRenderer.h")
     text = path.read_text(encoding="utf-8-sig")
-    for old in ("v5.1.2", "v5.1.1", "v5.0.1", "v5.1", "v5.0"):
-        text = text.replace(old, "v5.2")
-    text = replace_required(
-        text,
-        "static constexpr std::size_t kVisibleCapacity = 1536;",
-        "static constexpr std::size_t kVisibleCapacity = 4096;",
-        "diagnostic wake capacity",
+
+    already_applied = all(
+        token in text
+        for token in (
+            "Renderer Foundation v5.2",
+            "kVisibleCapacity = 4096",
+            "0.68f + sample.widthM / 9.0f",
+            "0.70f + sample.opacityStrength * 1.35f",
+            "0.78f",
+        )
     )
-    text = replace_required(
-        text,
-        '''        const float normalizedSize = std::clamp(
+    if already_applied:
+        print("renderer v5.2 tuning: already applied")
+    else:
+        for old in ("v5.1.2", "v5.1.1", "v5.0.1", "v5.1", "v5.0"):
+            text = text.replace(old, "v5.2")
+        text = replace_required(
+            text,
+            "static constexpr std::size_t kVisibleCapacity = 1536;",
+            "static constexpr std::size_t kVisibleCapacity = 4096;",
+            "diagnostic wake capacity",
+        )
+        text = replace_required(
+            text,
+            '''        const float normalizedSize = std::clamp(
                 sample.widthM / 4.0f,
                 0.08f,
                 1.0f);
@@ -44,7 +58,7 @@ def patch_renderer() -> None:
                 0.55f
             };
 ''',
-        '''        // v5.2 keeps the proven single native ribbon, but gives the
+            '''        // v5.2 keeps the proven single native ribbon, but gives the
             // formation zone enough width and optical weight to read as ice
             // cloud rather than a thin wire. All controls stay inside the
             // normalized 0..1 particle-dataref domain.
@@ -63,8 +77,9 @@ def patch_renderer() -> None:
                 0.78f
             };
 ''',
-        "v5.2 instance shaping",
-    )
+            "v5.2 instance shaping",
+        )
+
     if "XPLMLoadObjectAsync(" in text:
         raise RuntimeError("unsafe asynchronous startup loader returned")
     if "deferredNonEmptyFrameCount_ < 3" not in text:
@@ -75,39 +90,53 @@ def patch_renderer() -> None:
 def patch_plugin() -> None:
     path = Path("src/ContrailDebugPlugin.cpp")
     text = path.read_text(encoding="utf-8-sig")
-    for old, new in (
-        ("v5.1.2", "v5.2"),
-        ("V5.1.2", "V5.2"),
-        ("v5.1.1", "v5.2"),
-        ("V5.1.1", "V5.2"),
-        ("v5.0.1", "v5.2"),
-        ("V5.0.1", "V5.2"),
-        ("v5.1", "v5.2"),
-        ("V5.1", "V5.2"),
-        ("v5.0", "v5.2"),
-        ("V5.0", "V5.2"),
-        ("v5 point 1 point 2", "v5 point 2"),
-        ("v5 point 1", "v5 point 2"),
-        ("v5 point 0 point 1", "v5 point 2"),
-        ("v5 point 0", "v5 point 2"),
-    ):
-        text = text.replace(old, new)
-    text = replace_required(
-        text,
-        '''        renderPlannerSettings_.assetCapacities.fill(
+
+    already_applied = all(
+        token in text
+        for token in (
+            "Renderer Foundation v5.2",
+            "WORLD V5.2 READY",
+            "Visual Debug Report v5.2",
+            "assetCapacities.fill(512)",
+        )
+    )
+    if already_applied:
+        print("plugin v5.2 tuning: already applied")
+    else:
+        for old, new in (
+            ("v5.1.2", "v5.2"),
+            ("V5.1.2", "V5.2"),
+            ("v5.1.1", "v5.2"),
+            ("V5.1.1", "V5.2"),
+            ("v5.0.1", "v5.2"),
+            ("V5.0.1", "V5.2"),
+            ("v5.1", "v5.2"),
+            ("V5.1", "V5.2"),
+            ("v5.0", "v5.2"),
+            ("V5.0", "V5.2"),
+            ("v5 point 1 point 2", "v5 point 2"),
+            ("v5 point 1", "v5 point 2"),
+            ("v5 point 0 point 1", "v5 point 2"),
+            ("v5 point 0", "v5 point 2"),
+        ):
+            text = text.replace(old, new)
+        text = replace_required(
+            text,
+            '''        renderPlannerSettings_.assetCapacities.fill(
                 ContrailParticleRenderer::kInstancesPerAsset);
 ''',
-        '''        // The particle renderer consumes the youngest sample per
+            '''        // The particle renderer consumes the youngest sample per
             // engine, while the full wake plan remains available for v5.3
             // swirl/handoff diagnostics.
             renderPlannerSettings_.assetCapacities.fill(512);
 ''',
-        "wake planner diagnostic budget",
-    )
-    text = text.replace(
-        "Check the eight assets folder.",
-        "Check the native particle assets folder.",
-    )
+            "wake planner diagnostic budget",
+        )
+        text = text.replace(
+            "Check the eight assets folder.",
+            "Check the native particle assets folder.",
+        )
+
     if "WORLD V5.2 READY" not in text:
         raise RuntimeError("v5.2 overlay label was not produced")
     path.write_text(text, encoding="utf-8", newline="\n")

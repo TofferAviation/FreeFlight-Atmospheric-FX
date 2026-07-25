@@ -1,4 +1,4 @@
-name: Package Renderer Foundation v5.2
+name: Package Renderer v5.2.1 Colour Diagnostic
 
 on:
   workflow_dispatch:
@@ -6,22 +6,14 @@ on:
     branches:
       - agent/levelup-particle-renderer-v5
     paths:
-      - "tools/apply_renderer_v5_2_source_patch.py"
-      - "tools/generate_particle_renderer_v5_2_assets.py"
-      - ".github/workflows/engine-v1-particle-renderer-v5-2-package.yml"
-  pull_request:
-    branches:
-      - engine/v1
-    paths:
-      - "tools/apply_renderer_v5_2_source_patch.py"
-      - "tools/generate_particle_renderer_v5_2_assets.py"
+      - "tools/generate_particle_renderer_v5_2_1_colour_diagnostic.py"
       - ".github/workflows/engine-v1-particle-renderer-v5-2-package.yml"
 
 permissions:
   contents: read
 
 concurrency:
-  group: ffatmo-renderer-v52-package-${{ github.event.pull_request.number || github.ref_name }}
+  group: ffatmo-renderer-v521-colour-diagnostic
   cancel-in-progress: true
 
 jobs:
@@ -33,19 +25,14 @@ jobs:
         with:
           ref: agent/levelup-particle-renderer-v5
 
-      - name: Apply v5.2 source patch
-        shell: pwsh
-        run: python tools/apply_renderer_v5_2_source_patch.py
-
-      - name: Validate safe source policy
+      - name: Validate safe renderer source
         shell: pwsh
         run: |
           $renderer = Get-Content src/ContrailParticleRenderer.h -Raw
           $plugin = Get-Content src/ContrailDebugPlugin.cpp -Raw
           if ($renderer -match 'XPLMLoadObjectAsync\(') { throw "Unsafe loader remains" }
           if ($renderer -notmatch 'deferredNonEmptyFrameCount_ < 3') { throw "Safe-start gate is missing" }
-          if ($renderer -notmatch '0\.68f \+ sample\.widthM / 9\.0f') { throw "v5.2 width shaping is missing" }
-          if ($plugin -notmatch 'WORLD V5\.2 READY') { throw "v5.2 overlay label is missing" }
+          if ($plugin -notmatch 'WORLD V5\.2 READY') { throw "Expected v5.2 renderer source" }
 
       - name: Fetch X-Plane SDK
         id: sdk
@@ -71,52 +58,58 @@ jobs:
           $root = Split-Path (Split-Path (Split-Path $header.FullName -Parent) -Parent) -Parent
           "path=$root" >> $env:GITHUB_OUTPUT
 
-      - name: Configure and build
+      - name: Configure, build and test
         shell: pwsh
         run: |
-          cmake -S . -B build-v52 -A x64 -DXPLANE_SDK="${{ steps.sdk.outputs.path }}" -DFFATMO_BUILD_PLUGIN=OFF -DFFATMO_BUILD_COMPANION=OFF -DFFATMO_BUILD_IMGUI_PANEL=OFF -DFFATMO_BUILD_GEOMETRY_DEBUG=OFF -DFFATMO_BUILD_RECORDER_DEBUG=OFF -DFFATMO_BUILD_CONTRAIL_DEBUG=ON -DFFATMO_BUILD_REPLAY_RUNNER=OFF -DFFATMO_BUILD_TESTS=ON -DFFATMO_GIT_REVISION="${{ github.sha }}"
-          cmake --build build-v52 --config Release --target FFAtmoContrailDebug ffatmo_core_tests ffatmo_acf_tests ffatmo_replay_tests ffatmo_replay_runner_tests ffatmo_contrail_tests ffatmo_live_contrail_debug_tests ffatmo_contrail_render_planner_tests
+          cmake -S . -B build-v521-diag -A x64 -DXPLANE_SDK="${{ steps.sdk.outputs.path }}" -DFFATMO_BUILD_PLUGIN=OFF -DFFATMO_BUILD_COMPANION=OFF -DFFATMO_BUILD_IMGUI_PANEL=OFF -DFFATMO_BUILD_GEOMETRY_DEBUG=OFF -DFFATMO_BUILD_RECORDER_DEBUG=OFF -DFFATMO_BUILD_CONTRAIL_DEBUG=ON -DFFATMO_BUILD_REPLAY_RUNNER=OFF -DFFATMO_BUILD_TESTS=ON -DFFATMO_GIT_REVISION="${{ github.sha }}"
+          cmake --build build-v521-diag --config Release --target FFAtmoContrailDebug ffatmo_core_tests ffatmo_acf_tests ffatmo_replay_tests ffatmo_replay_runner_tests ffatmo_contrail_tests ffatmo_live_contrail_debug_tests ffatmo_contrail_render_planner_tests
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          ctest --test-dir build-v52 -C Release --output-on-failure
+          ctest --test-dir build-v521-diag -C Release --output-on-failure
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Generate and validate particle assets
+      - name: Generate and validate colour diagnostic
         shell: pwsh
         run: |
-          python tools/generate_particle_renderer_v5_2_assets.py generated-particle-assets
-          $obj = Get-Content generated-particle-assets/contrail_ribbon.obj -Raw
-          $pssLines = Get-Content generated-particle-assets/contrail_v5_2.pss
+          python tools/generate_particle_renderer_v5_2_1_colour_diagnostic.py generated-diagnostic-assets
+          $obj = Get-Content generated-diagnostic-assets/contrail_ribbon.obj -Raw
+          $pssLines = Get-Content generated-diagnostic-assets/contrail_v5_2_1_colour_diag.pss
           if ($obj -match 'TRIS|TEXTURE_LIT') { throw "Legacy geometry found" }
-          if (($pssLines | Where-Object { $_.Trim() -eq 'SUB_EMITTER' }).Count -ne 1) { throw "Expected one sub-emitter" }
-          if (($pssLines | Where-Object { $_.Trim() -eq 'BILLBOARD_MODE RIBBON' }).Count -ne 1) { throw "Ribbon mode missing" }
-          if (($pssLines | Where-Object { $_.Trim() -eq 'BILLBOARD_MODE BILLBOARD' }).Count -ne 0) { throw "Failed billboard path returned" }
+          if (($pssLines | Where-Object { $_.Trim() -eq 'PARTICLE' }).Count -ne 3) { throw "Expected three particle types" }
+          if (($pssLines | Where-Object { $_.Trim() -eq 'SUB_EMITTER' }).Count -ne 3) { throw "Expected three separate emitters" }
+          if (($pssLines | Where-Object { $_.Trim() -eq 'BILLBOARD_MODE RIBBON' }).Count -ne 3) { throw "All paths must remain ribbons" }
+          if (($pssLines | Where-Object { $_.Trim() -eq 'BLEND_MODE NORMAL' }).Count -ne 2) { throw "Expected two normal paths" }
+          if (($pssLines | Where-Object { $_.Trim() -eq 'BLEND_MODE ADDITIVE' }).Count -ne 1) { throw "Expected one additive path" }
 
-      - name: Assemble package
+      - name: Assemble diagnostic package
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path artifact/FFAtmoContrailDebug/64 | Out-Null
           New-Item -ItemType Directory -Force -Path artifact/FFAtmoContrailDebug/assets | Out-Null
           Copy-Item package/FFAtmoContrailDebug/64/win.xpl artifact/FFAtmoContrailDebug/64/win.xpl -Force
-          Copy-Item generated-particle-assets/* artifact/FFAtmoContrailDebug/assets/ -Force
+          Copy-Item generated-diagnostic-assets/* artifact/FFAtmoContrailDebug/assets/ -Force
           @'
-          FFAtmo LevelUp 737-800NG Renderer Foundation v5.2 Realism Pass
+          FFAtmo Renderer v5.2.1 Colour-Isolation Diagnostic
 
-          Delete the previous FFAtmoContrailDebug folder before installing.
-          Confirm WORLD V5.2 READY and use Forced Dry Preview.
+          TOP RED      = NORMAL blend with AMBIENT=1, DIFFUSE=1, EMISSIVE=0
+          MIDDLE GREEN = NORMAL blend with AMBIENT=0, DIFFUSE=0, EMISSIVE=1
+          BOTTOM BLUE  = ADDITIVE blend with AMBIENT=0, DIFFUSE=0, EMISSIVE=1
 
-          Expected changes:
-          - stable single native ribbon per engine
-          - white/light-grey self-lit ice-cloud appearance
-          - broader feathered trail body
-          - smoother formation and fading
-          - unchanged cooling gap, LevelUp geometry and Wake Fluid Simulation v1
-          '@ | Set-Content artifact/FFAtmoContrailDebug/README_TESTING.txt -Encoding utf8
-          "renderer=engine-v1-levelup-b738-v5.2-single-ribbon-realism" | Set-Content artifact/FFAtmoContrailDebug/BUILD_INFO.txt -Encoding utf8
+          Red visible: world-lighting path works.
+          Green visible: emissive reaches normal blending.
+          Only blue visible: normal blend/alpha path causes the black ribbons.
+          All black: ribbon colour sampling or an external override is responsible.
+          No trails: multiple named emitters are unsupported in this path.
 
-      - name: Upload v5.2 package
+          Delete the previous FFAtmoContrailDebug folder, install this package,
+          select Forced Dry Preview, fly straight for 15 seconds, and capture one
+          screenshot against sky and one against terrain.
+          '@ | Set-Content artifact/FFAtmoContrailDebug/README_DIAGNOSTIC.txt -Encoding utf8
+          "renderer=engine-v1-levelup-b738-v5.2.1-colour-isolation" | Set-Content artifact/FFAtmoContrailDebug/BUILD_INFO.txt -Encoding utf8
+
+      - name: Upload diagnostic package
         uses: actions/upload-artifact@v4
         with:
-          name: FFAtmoContrailDebug-v5.2-win64
+          name: FFAtmoContrailDebug-v5.2.1-colour-diagnostic
           path: artifact/FFAtmoContrailDebug
           if-no-files-found: error
           retention-days: 14

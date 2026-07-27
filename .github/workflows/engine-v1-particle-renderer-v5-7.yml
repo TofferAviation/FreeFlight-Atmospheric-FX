@@ -98,20 +98,35 @@ jobs:
         shell: pwsh
         run: |
           python tools/generate_particle_renderer_v5_7_assets.py generated-v57-assets
-          $obj = Get-Content generated-v57-assets/contrail_billboard.obj -Raw
-          $pss = Get-Content generated-v57-assets/contrail_v5_7_layered.pss -Raw
-          if (($pss | Select-String -Pattern 'BILLBOARD_MODE AXIAL' -AllMatches).Matches.Count -ne 1) { throw "Axial cloud core missing" }
-          if (($pss | Select-String -Pattern 'BILLBOARD_MODE BILLBOARD' -AllMatches).Matches.Count -ne 1) { throw "Round cloud halo missing" }
-          if (($pss | Select-String -Pattern '^SUB_EMITTER' -AllMatches).Matches.Count -ne 2) { throw "Two attached cloud layers required" }
-          if ($pss -match 'BILLBOARD_MODE RIBBON') { throw "Ribbon mode returned" }
-          if ($pss -notmatch '5\.200000') { throw "Axial length ratio missing" }
-          if ($pss -notmatch '0\.650000 0\.650000') { throw "Minimum particle width missing" }
-          if ($pss -notmatch '12\.000000 12\.000000') { throw "Maximum particle width missing" }
-          if ($obj -match 'TRIS|TEXTURE_LIT') { throw "Legacy card material returned" }
           @'
           from pathlib import Path
           import struct
-          data = Path("generated-v57-assets/contrail_v5_7_cloud.png").read_bytes()
+
+          pss_path = Path("generated-v57-assets/contrail_v5_7_layered.pss")
+          obj_path = Path("generated-v57-assets/contrail_billboard.obj")
+          png_path = Path("generated-v57-assets/contrail_v5_7_cloud.png")
+          pss = pss_path.read_text(encoding="utf-8")
+          obj = obj_path.read_text(encoding="utf-8")
+          lines = [line.strip() for line in pss.splitlines()]
+          if lines.count("BILLBOARD_MODE AXIAL") != 1:
+              raise RuntimeError("Axial cloud core missing")
+          if lines.count("BILLBOARD_MODE BILLBOARD") != 1:
+              raise RuntimeError("Round cloud halo missing")
+          if lines.count("SUB_EMITTER") != 2:
+              raise RuntimeError("Two attached cloud layers required")
+          if lines.count("PARTICLE") != 2:
+              raise RuntimeError("Two particle definitions required")
+          if "BILLBOARD_MODE RIBBON" in lines:
+              raise RuntimeError("Ribbon mode returned")
+          if "5.200000" not in pss:
+              raise RuntimeError("Axial length ratio missing")
+          if "0.650000 0.650000" not in pss:
+              raise RuntimeError("Minimum particle width missing")
+          if "12.000000 12.000000" not in pss:
+              raise RuntimeError("Maximum particle width missing")
+          if "TRIS" in obj or "TEXTURE_LIT" in obj:
+              raise RuntimeError("Legacy card material returned")
+          data = png_path.read_bytes()
           width, height = struct.unpack(">II", data[16:24])
           if (width, height) != (1024, 1024):
               raise RuntimeError(f"Expected 1024x1024 cloud texture, got {width}x{height}")

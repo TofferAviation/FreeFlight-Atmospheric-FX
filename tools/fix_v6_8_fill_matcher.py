@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# v6.8 retry trigger: curved-fill matcher is intentionally applied after v6.7.
 from pathlib import Path
 import re
 

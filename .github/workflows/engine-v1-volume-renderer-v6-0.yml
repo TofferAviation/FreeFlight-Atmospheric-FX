@@ -8,6 +8,7 @@ on:
     paths:
       - "src/ContrailVolumeRenderer.h"
       - "tools/patch_v6_0_volumetric_renderer.py"
+      - "tools/fix_v6_0_windows_gl_loader.py"
       - ".github/workflows/engine-v1-volume-renderer-v6-0.yml"
   pull_request:
     branches:
@@ -15,6 +16,7 @@ on:
     paths:
       - "src/ContrailVolumeRenderer.h"
       - "tools/patch_v6_0_volumetric_renderer.py"
+      - "tools/fix_v6_0_windows_gl_loader.py"
       - ".github/workflows/engine-v1-volume-renderer-v6-0.yml"
 
 permissions:
@@ -43,6 +45,7 @@ jobs:
           python tools/patch_v5_5_2_cruise_visibility.py
           python tools/patch_v5_6_connected_cloud_swirl.py
           python tools/patch_v6_0_volumetric_renderer.py
+          python tools/fix_v6_0_windows_gl_loader.py
 
           $plugin = Get-Content src/ContrailDebugPlugin.cpp -Raw
           $volume = Get-Content src/ContrailVolumeRenderer.h -Raw
@@ -54,6 +57,7 @@ jobs:
           if ($volume -notmatch 'for \(int i = 0; i < 34; \+\+i\)') { throw "Ray-march integration loop missing" }
           if ($volume -notmatch 'XPLMSetGraphicsState\(0, 0, 0, 0, 1, 1, 0\)') { throw "Depth-tested blended state missing" }
           if ($volume -match 'BILLBOARD_MODE|PARTICLE_SYSTEM|XPLMCreateInstance') { throw "Particle/impostor renderer leaked into v6.0" }
+          if ($volume -match 'glext\.h|PFNGL') { throw "External GL extension header dependency returned" }
 
       - name: Fetch X-Plane Plugin SDK 4.3.0
         id: sdk

@@ -34,8 +34,7 @@ volume = volume.replace(
     1,
 )
 
-# Count every attempt to initialise the shader bridge. Do not depend on the
-# version string inside the log message.
+# Count every attempt to initialise the shader bridge.
 gpu_marker = "        if (gpuReady_) return true;\n        if (!loadGlFunctions()) {\n"
 if volume.count(gpu_marker) != 1:
     raise RuntimeError("GPU init structural marker was not found uniquely")
@@ -88,7 +87,6 @@ volume = volume.replace(
     1,
 )
 
-# Replace the v6.0 overlay line structurally rather than relying on whitespace.
 status_pattern = re.compile(
     r'\s*status\.rendererStatus = worldRenderer_\.ready\(\) \?\s*\n'
     r'\s*"VOLUME V6\.0 ARMED" : "VOLUME V6\.0 OFFLINE";'
@@ -107,7 +105,6 @@ plugin, replaced = status_pattern.subn(status_replacement, plugin, count=1)
 if replaced != 1:
     raise RuntimeError("v6.0 overlay status assignment was not found")
 
-# Add diagnostics immediately after the existing loaded-object report line.
 report_marker = "               << \"world_renderer_loaded_objects=\" << worldRenderer_.loadedObjectCount() << '\\n'\n"
 if plugin.count(report_marker) != 1:
     raise RuntimeError("Report renderer insertion marker is not unique")
@@ -123,9 +120,11 @@ plugin = plugin.replace(
     1,
 )
 
-# Version text last, after structural edits have found the v6.0 baseline.
-volume = volume.replace("v6.0", "v6.0.1").replace("V6.0", "V6.0.1")
-plugin = plugin.replace("v6.0", "v6.0.1").replace("V6.0", "V6.0.1")
+# Version text last, but do not rewrite the v6.0.1 diagnostic strings inserted above.
+volume = re.sub(r"v6\.0(?!\.1)", "v6.0.1", volume)
+volume = re.sub(r"V6\.0(?!\.1)", "V6.0.1", volume)
+plugin = re.sub(r"v6\.0(?!\.1)", "v6.0.1", plugin)
+plugin = re.sub(r"V6\.0(?!\.1)", "V6.0.1", plugin)
 plugin = plugin.replace("v6 point 0", "v6 point 0 point 1")
 
 if volume.count("xplm_Phase_Modern3D, 1, this") != 2:
@@ -136,6 +135,8 @@ if "VOLUME V6.0.1 WAITING DRAW" not in plugin:
     raise RuntimeError("v6.0.1 overlay diagnostics are missing")
 if "world_renderer_draw_callback_count" not in plugin:
     raise RuntimeError("v6.0.1 report diagnostics are missing")
+if "V6.0.1.1" in volume or "V6.0.1.1" in plugin or "v6.0.1.1" in volume or "v6.0.1.1" in plugin:
+    raise RuntimeError("v6.0.1 version was rewritten twice")
 
 VOLUME.write_text(volume, encoding="utf-8", newline="\n")
 PLUGIN.write_text(plugin, encoding="utf-8", newline="\n")

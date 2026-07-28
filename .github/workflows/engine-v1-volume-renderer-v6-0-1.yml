@@ -40,30 +40,48 @@ jobs:
       - name: Apply stable wake baseline and v6.0.1 dispatch fix
         shell: pwsh
         run: |
-          python tools/fix_v5_5_regex_literals.py
-          python tools/patch_v5_4_1_runtime.py
-          python tools/patch_v5_5_parcel_clusters.py
-          python tools/patch_v5_5_1_visibility.py
-          python tools/patch_v5_5_2_cruise_visibility.py
-          python tools/patch_v5_6_connected_cloud_swirl.py
-          python tools/patch_v6_0_volumetric_renderer.py
-          python tools/fix_v6_0_windows_gl_loader.py
-          python tools/patch_v6_0_1_modern3d_dispatch.py
+          New-Item -ItemType Directory -Force -Path build-logs | Out-Null
+          $ErrorActionPreference = 'Stop'
+          try {
+            & python tools/fix_v5_5_regex_literals.py 2>&1 | Tee-Object -FilePath build-logs/patch.txt -Append
+            if ($LASTEXITCODE -ne 0) { throw "fix_v5_5_regex_literals.py failed" }
+            & python tools/patch_v5_4_1_runtime.py 2>&1 | Tee-Object -FilePath build-logs/patch.txt -Append
+            if ($LASTEXITCODE -ne 0) { throw "patch_v5_4_1_runtime.py failed" }
+            & python tools/patch_v5_5_parcel_clusters.py 2>&1 | Tee-Object -FilePath build-logs/patch.txt -Append
+            if ($LASTEXITCODE -ne 0) { throw "patch_v5_5_parcel_clusters.py failed" }
+            & python tools/patch_v5_5_1_visibility.py 2>&1 | Tee-Object -FilePath build-logs/patch.txt -Append
+            if ($LASTEXITCODE -ne 0) { throw "patch_v5_5_1_visibility.py failed" }
+            & python tools/patch_v5_5_2_cruise_visibility.py 2>&1 | Tee-Object -FilePath build-logs/patch.txt -Append
+            if ($LASTEXITCODE -ne 0) { throw "patch_v5_5_2_cruise_visibility.py failed" }
+            & python tools/patch_v5_6_connected_cloud_swirl.py 2>&1 | Tee-Object -FilePath build-logs/patch.txt -Append
+            if ($LASTEXITCODE -ne 0) { throw "patch_v5_6_connected_cloud_swirl.py failed" }
+            & python tools/patch_v6_0_volumetric_renderer.py 2>&1 | Tee-Object -FilePath build-logs/patch.txt -Append
+            if ($LASTEXITCODE -ne 0) { throw "patch_v6_0_volumetric_renderer.py failed" }
+            & python tools/fix_v6_0_windows_gl_loader.py 2>&1 | Tee-Object -FilePath build-logs/patch.txt -Append
+            if ($LASTEXITCODE -ne 0) { throw "fix_v6_0_windows_gl_loader.py failed" }
+            & python tools/patch_v6_0_1_modern3d_dispatch.py 2>&1 | Tee-Object -FilePath build-logs/patch.txt -Append
+            if ($LASTEXITCODE -ne 0) { throw "patch_v6_0_1_modern3d_dispatch.py failed" }
 
-          $plugin = Get-Content src/ContrailDebugPlugin.cpp -Raw
-          $volume = Get-Content src/ContrailVolumeRenderer.h -Raw
-          if ($plugin -notmatch 'ContrailVolumeRenderer') { throw "v6.0.1 volume renderer not integrated" }
-          if ($plugin -match 'ContrailParticleRenderer worldRenderer_') { throw "Particle renderer still owns world rendering" }
-          if ($plugin -notmatch 'VOLUME V6\.0\.1 WAITING DRAW') { throw "v6.0.1 draw-state overlay missing" }
-          if ($plugin -notmatch 'world_renderer_draw_callback_count') { throw "v6.0.1 report callback diagnostics missing" }
-          if ($volume -notmatch 'xplm_Phase_Modern3D, 1, this') { throw "Modern3D BEFORE callback missing" }
-          if ($volume -match 'xplm_Phase_Modern3D, 0, this') { throw "Modern3D AFTER callback returned" }
-          if ($volume -notmatch 'drawCallbackInvocationCount_') { throw "callback counter missing" }
-          if ($volume -notmatch 'lastWorldRenderType_ == 1') { throw "documented auxiliary-pass filter missing" }
-          if ($volume -notmatch 'densityAt\(') { throw "procedural volume density function missing" }
-          if ($volume -notmatch 'for \(int i = 0; i < 34; \+\+i\)') { throw "ray-march integration loop missing" }
-          if ($volume -match 'BILLBOARD_MODE|PARTICLE_SYSTEM|XPLMCreateInstance') { throw "particle/impostor renderer leaked into v6.0.1" }
-          if ($volume -match 'glext\.h|PFNGL') { throw "external GL extension dependency returned" }
+            $plugin = Get-Content src/ContrailDebugPlugin.cpp -Raw
+            $volume = Get-Content src/ContrailVolumeRenderer.h -Raw
+            if ($plugin -notmatch 'ContrailVolumeRenderer') { throw "v6.0.1 volume renderer not integrated" }
+            if ($plugin -match 'ContrailParticleRenderer worldRenderer_') { throw "Particle renderer still owns world rendering" }
+            if ($plugin -notmatch 'VOLUME V6\.0\.1 WAITING DRAW') { throw "v6.0.1 draw-state overlay missing" }
+            if ($plugin -notmatch 'world_renderer_draw_callback_count') { throw "v6.0.1 report callback diagnostics missing" }
+            if ($volume -notmatch 'xplm_Phase_Modern3D, 1, this') { throw "Modern3D BEFORE callback missing" }
+            if ($volume -match 'xplm_Phase_Modern3D, 0, this') { throw "Modern3D AFTER callback returned" }
+            if ($volume -notmatch 'drawCallbackInvocationCount_') { throw "callback counter missing" }
+            if ($volume -notmatch 'lastWorldRenderType_ == 1') { throw "documented auxiliary-pass filter missing" }
+            if ($volume -notmatch 'densityAt\(') { throw "procedural volume density function missing" }
+            if ($volume -notmatch 'for \(int i = 0; i < 34; \+\+i\)') { throw "ray-march integration loop missing" }
+            if ($volume -match 'BILLBOARD_MODE|PARTICLE_SYSTEM|XPLMCreateInstance') { throw "particle/impostor renderer leaked into v6.0.1" }
+            if ($volume -match 'glext\.h|PFNGL') { throw "external GL extension dependency returned" }
+            "POLICY CHECKS PASSED" | Tee-Object -FilePath build-logs/patch.txt -Append
+          } catch {
+            "PATCH/POLICY FAILURE: $($_.Exception.Message)" | Tee-Object -FilePath build-logs/patch.txt -Append
+            Get-Content build-logs/patch.txt
+            throw
+          }
 
       - name: Fetch X-Plane Plugin SDK 4.3.0
         id: sdk
@@ -92,7 +110,6 @@ jobs:
       - name: Compile volumetric plugin and deterministic physics tests
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path build-logs | Out-Null
           cmake -S . -B build-v601 -A x64 -DXPLANE_SDK="${{ steps.sdk.outputs.path }}" -DFFATMO_BUILD_PLUGIN=OFF -DFFATMO_BUILD_COMPANION=OFF -DFFATMO_BUILD_IMGUI_PANEL=OFF -DFFATMO_BUILD_GEOMETRY_DEBUG=OFF -DFFATMO_BUILD_RECORDER_DEBUG=OFF -DFFATMO_BUILD_CONTRAIL_DEBUG=ON -DFFATMO_BUILD_REPLAY_RUNNER=OFF -DFFATMO_BUILD_TESTS=ON -DFFATMO_GIT_REVISION="${{ github.sha }}"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & cmake --build build-v601 --config Release --target FFAtmoContrailDebug ffatmo_core_tests ffatmo_acf_tests ffatmo_replay_tests ffatmo_replay_runner_tests ffatmo_contrail_tests ffatmo_live_contrail_debug_tests ffatmo_contrail_render_planner_tests *> build-logs/build.txt
@@ -120,9 +137,6 @@ jobs:
           - Overlay states: WAITING DRAW -> GPU INIT -> GPU READY.
 
           Test Forced Dry Preview. Export the report after at least 20 seconds.
-          If the overlay remains WAITING DRAW and callback_count=0, XP12.4.3 is not
-          dispatching the public Modern3D path in this configuration and the renderer
-          must move to a different supported integration boundary.
           '@ | Set-Content artifact/FFAtmoContrailDebug/README_TESTING.txt -Encoding utf8
           "renderer=engine-v1-levelup-b738-v6.0.1-modern3d-dispatch" | Set-Content artifact/FFAtmoContrailDebug/BUILD_INFO.txt -Encoding utf8
           "git_revision=${{ github.sha }}" | Add-Content artifact/FFAtmoContrailDebug/BUILD_INFO.txt -Encoding utf8

@@ -8,11 +8,13 @@ on:
     paths:
       - "src/engine/WakeVortexSheet.h"
       - "src/engine/ContrailSimulation.h"
+      - "tools/patch_v6_9_vortex_sheet_runtime.py"
       - ".github/workflows/engine-v1-v6-9-vortex-sheet-core.yml"
   pull_request:
     paths:
       - "src/engine/WakeVortexSheet.h"
       - "src/engine/ContrailSimulation.h"
+      - "tools/patch_v6_9_vortex_sheet_runtime.py"
       - ".github/workflows/engine-v1-v6-9-vortex-sheet-core.yml"
 
 permissions:
@@ -29,11 +31,18 @@ jobs:
       - name: Check out v6.9 source
         uses: actions/checkout@v4
 
+      - name: Apply v6.9 live marker integration
+        shell: pwsh
+        run: |
+          python tools/patch_v6_9_vortex_sheet_runtime.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: Verify architectural contract
         shell: pwsh
         run: |
           $sheet = Get-Content src/engine/WakeVortexSheet.h -Raw
           $parcel = Get-Content src/engine/ContrailSimulation.h -Raw
+          $live = Get-Content src/engine/LiveContrailEngine.cpp -Raw
           if ($sheet -notmatch 'enum class WakeSheetLane') { throw "wake-sheet lanes missing" }
           foreach ($lane in @('Inner','Core','Outer','Secondary')) {
             if ($sheet -notmatch $lane) { throw "wake-sheet lane $lane missing" }
@@ -43,6 +52,9 @@ jobs:
           if ($sheet -notmatch 'advanceWakeFluidState') { throw "sheet is not driven by WakeFluidSolver" }
           if ($sheet -notmatch 'activeForRendering') { throw "secondary wake activation state missing" }
           if ($parcel -notmatch 'WakeVortexSheetState vortexSheet') { throw "contrail parcel does not carry v6.9 wake section" }
+          if ($live -notmatch 'initializeWakeVortexSheet') { throw "live emission does not initialise the marker sheet" }
+          if ($live -notmatch 'advanceWakeVortexSheet') { throw "live runtime does not advance the marker sheet" }
+          if ($live -notmatch 'ambientWakeVelocityWorld') { throw "marker field does not receive ambient advection" }
 
       - name: Fetch X-Plane Plugin SDK 4.3.0
         id: sdk

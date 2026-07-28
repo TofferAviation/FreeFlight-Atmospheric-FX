@@ -176,23 +176,23 @@ p = once(
     "               << \"vortex_sampling_mode=SPARSE_SUBSCALE\" << '\\n'",
     "v6.6 report modes",
 )
-p = once(
+
+p = rx(
     p,
-    '''               << "world_renderer_swirl_candidate_count="
-               << worldRenderer_.swirlCandidateCount() << '\n'
-               << "simulation_enabled="''',
-    '''               << "world_renderer_swirl_candidate_count="
-               << worldRenderer_.swirlCandidateCount() << '\n'
+    r'''\s*<<\s*"world_renderer_swirl_candidate_count="\s*\n?\s*<<\s*worldRenderer_\.swirlCandidateCount\(\)\s*<<\s*'\\n'\s*\n?\s*<<\s*"simulation_enabled="''',
+    '''
+               << "world_renderer_swirl_candidate_count="
+               << worldRenderer_.swirlCandidateCount() << '\\n'
                << "world_renderer_primary_cloudlet_count="
-               << worldRenderer_.primaryCloudletCount() << '\n'
+               << worldRenderer_.primaryCloudletCount() << '\\n'
                << "world_renderer_fill_cloudlet_count="
-               << worldRenderer_.fillCloudletCount() << '\n'
+               << worldRenderer_.fillCloudletCount() << '\\n'
                << "world_renderer_swirl_cloudlet_count="
-               << worldRenderer_.swirlCloudletCount() << '\n'
+               << worldRenderer_.swirlCloudletCount() << '\\n'
                << "world_renderer_maximum_swirl_radius_m="
-               << worldRenderer_.maximumSwirlRadiusM() << '\n'
+               << worldRenderer_.maximumSwirlRadiusM() << '\\n'
                << "world_renderer_mean_swirl_radius_m="
-               << worldRenderer_.meanSwirlRadiusM() << '\n'
+               << worldRenderer_.meanSwirlRadiusM() << '\\n'
                << "simulation_enabled="''',
     "v6.6 cloud layer diagnostics",
 )

@@ -17,8 +17,7 @@ def once(text: str, old: str, new: str, label: str) -> str:
 
 
 def rx(text: str, pattern: str, replacement: str, label: str) -> str:
-    # A callable replacement prevents re.sub from interpreting backslashes in
-    # generated C++ text (for example the literal '\\n' report delimiters).
+    # Callable replacement keeps generated C++ backslash escapes literal.
     out, count = re.subn(
         pattern,
         lambda _match: replacement,
@@ -91,15 +90,17 @@ p = once(
     "diagnostic member",
 )
 
-report_old = r'''               << "current_condensation_full_seconds="
-               << latestCondensationFullSeconds_ << '\n'
-               << "geometry_status=" << geometryStatus_ << '\n' '''
-report_new = r'''               << "current_condensation_full_seconds="
+p = rx(
+    p,
+    r'''\s*<< "current_condensation_full_seconds="\s*\n\s*<< latestCondensationFullSeconds_ << '\\n'\s*\n\s*<< "geometry_status=" << geometryStatus_ << '\\n' ''',
+    r'''
+               << "current_condensation_full_seconds="
                << latestCondensationFullSeconds_ << '\n'
                << "visual_head_spatial_onset_target_m="
                << latestSpatialOnsetTargetM_ << '\n'
-               << "geometry_status=" << geometryStatus_ << '\n' '''
-p = once(p, report_old, report_new, "spatial onset report field")
+               << "geometry_status=" << geometryStatus_ << '\n' ''',
+    "spatial onset report field",
+)
 
 asset_loop = "        for (std::size_t index = 0; index < render::kContrailRenderAssetCount; ++index) {"
 engine_diag = r'''        for (std::size_t engineIndex = 0; engineIndex < engineExhaustBodyOffsets_.size(); ++engineIndex) {

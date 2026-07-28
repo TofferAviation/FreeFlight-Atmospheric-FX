@@ -1,7 +1,8 @@
 #include "ContrailDebugOverlay.h"
-#include "ContrailWorldRenderer.h"
+#include "ContrailParticleRenderer.h"
 #include "acf/AcfGeometry.h"
 #include "diagnostics/LiveSnapshotNormalizer.h"
+#include "engine/ContrailCondensationModel.h"
 #include "engine/LiveContrailEngine.h"
 #include "host/XPlaneSnapshotSource.h"
 #include "render/ContrailRenderPlanner.h"
@@ -53,14 +54,18 @@ public:
         settings.emissionIntervalSeconds = kLiveEmissionIntervalSeconds;
         liveEngine_.setSettings(settings);
 
-        renderPlannerSettings_.visibleCapacity = ContrailWorldRenderer::kVisibleCapacity;
+        renderPlannerSettings_.visibleCapacity = ContrailParticleRenderer::kVisibleCapacity;
         renderPlannerSettings_.maximumSamplesPerSegment = 8;
-        renderPlannerSettings_.heatHandoffStartSeconds = 0.02f;
-        renderPlannerSettings_.heatHandoffFullSeconds = 0.80f;
+        // Nucleation opacity is now evaluated before the render planner. Keep
+        // only a very short safety ramp here to avoid double-fading the trail.
+        renderPlannerSettings_.heatHandoffStartSeconds = 0.0f;
+        renderPlannerSettings_.heatHandoffFullSeconds = 0.05f;
         renderPlannerSettings_.maximumCoreAgeSeconds = 22.0f;
         renderPlannerSettings_.maximumSelectedSpacingM = 45.0;
-        renderPlannerSettings_.assetCapacities.fill(
-            ContrailWorldRenderer::kInstancesPerAsset);
+        // The particle renderer consumes the youngest sample per
+        // engine, while the full wake plan remains available for v5.3
+        // swirl/handoff diagnostics.
+        renderPlannerSettings_.assetCapacities.fill(512);
     }
 
     bool start() {
@@ -68,8 +73,8 @@ public:
         reportPath_ = pluginRoot_ / "reports" / "contrail_visual_debug.txt";
         profileService_ = std::make_unique<acf::AcfProfileService>();
         createCommandsAndMenu();
-        log("Started. Renderer Foundation v4.2 uses a 0.12-second live cadence, "
-            "an exhaust heat-haze handoff, and continuity-first trail planning.\n");
+        log("Started. Renderer Foundation v5.2 uses atmosphere-conditioned "
+            "cooling and nucleation with continuity-first trail planning.\n");
         return true;
     }
 
@@ -83,7 +88,7 @@ public:
             return false;
         }
         if (!worldRenderer_.start(pluginRoot_ / "assets")) {
-            log("Could not start Renderer Foundation v4.2. Check the eight assets folder.\n");
+            log("Could not start Renderer Foundation v5.2. Check the native particle assets folder.\n");
             overlay_.stop();
             return false;
         }
@@ -224,6 +229,8 @@ private:
         latestPlannerTimeMs_ = 0.0;
         maximumPlannerTimeMs_ = 0.0;
         maximumExhaustToFirstVisibleM_ = 0.0;
+        latestCondensationStartSeconds_ = 0.0f;
+        latestCondensationFullSeconds_ = 0.0f;
         previewGateOpen_ = false;
         worldRenderer_.update({});
         overlay_.setFrame({}, {}, {});
@@ -268,6 +275,10 @@ private:
         if (!result->ok || result->profile.engines.empty()) {
             geometryReady_ = false;
             geometryStatus_ = "ACF FALLBACK OFFSETS";
+            if (snapshotSource_.aircraftIcao() == "B738") {
+                liveEngine_.setWakeAircraftGeometry(35.8f, 65000.0f);
+                geometryStatus_ += " | B738 WAKE FALLBACK";
+            }
             log("ACF geometry unavailable; using symmetric fallback exhaust offsets.\n");
             return;
         }
@@ -282,15 +293,39 @@ private:
             });
         }
         liveEngine_.setEngineExhaustBodyOffsets(engineExhaustBodyOffsets_);
+
+        float wakeWingspanM = 0.0f;
+        if (result->profile.hasLeftWingtip && result->profile.hasRightWingtip) {
+            const double dx = result->profile.rightWingtipBodyM.x -
+                              result->profile.leftWingtipBodyM.x;
+            const double dy = result->profile.rightWingtipBodyM.y -
+                              result->profile.leftWingtipBodyM.y;
+            const double dz = result->profile.rightWingtipBodyM.z -
+                              result->profile.leftWingtipBodyM.z;
+            wakeWingspanM = static_cast<float>(std::sqrt(dx * dx + dy * dy + dz * dz));
+        }
+        float wakeReferenceMassKg = static_cast<float>(
+            result->profile.maximumMassKg > 10000.0
+                ? result->profile.maximumMassKg
+                : result->profile.emptyMassKg * 1.35);
+        const bool b738Profile = result->profile.aircraftIcao == "B738" ||
+                                 snapshotSource_.aircraftIcao() == "B738";
+        if (b738Profile && wakeWingspanM < 20.0f) wakeWingspanM = 35.8f;
+        if (b738Profile && wakeReferenceMassKg < 10000.0f) {
+            wakeReferenceMassKg = 65000.0f;
+        }
+        liveEngine_.setWakeAircraftGeometry(wakeWingspanM, wakeReferenceMassKg);
         liveEngine_.reset();
         latestRenderPlan_ = {};
         worldRenderer_.update({});
         geometryReady_ = true;
         geometryStatus_ = "ACF EXHAUSTS: " +
             std::to_string(engineExhaustBodyOffsets_.size());
-        log("Renderer v4.2 exhaust geometry ready for " + result->profile.aircraftName +
-            ": " + std::to_string(engineExhaustBodyOffsets_.size()) + " engines.\n");
-        XPLMSpeakString("FF Atmo Renderer v4 point 2 geometry ready");
+        if (b738Profile) geometryStatus_ += " | B738 WAKE";
+        log("Renderer v5.2 exhaust and wake geometry ready for " +
+            result->profile.aircraftName + ": " +
+            std::to_string(engineExhaustBodyOffsets_.size()) + " engines.\n");
+        XPLMSpeakString("FF Atmo Renderer v5 point 2 geometry ready");
     }
 
     bool applyAtmosphereMode(engine::SimulatorSnapshot& snapshot,
@@ -340,9 +375,24 @@ private:
         return true;
     }
 
+    engine::ContrailCondensationHandoff condensationHandoff(
+        const engine::SimulatorSnapshot& snapshot,
+        const engine::ContrailParcel& parcel) const {
+        const std::size_t engineIndex = std::min<std::size_t>(
+            parcel.engineIndex, snapshot.engines.size() - 1u);
+        const auto& sourceEngine = snapshot.engines[engineIndex];
+        return engine::calculateContrailCondensationHandoff(
+            parcel.sourceTemperatureK,
+            parcel.sourceRelativeHumidityIcePercent,
+            snapshot.atmosphere.staticPressurePa,
+            sourceEngine.exhaustVelocityMps,
+            sourceEngine.fuelFlowKgps,
+            snapshot.trueAirspeedMps);
+    }
+
     std::vector<render::ContrailRenderInput> buildRenderInputs(
         const engine::SimulatorSnapshot& snapshot,
-        const diagnostics::NormalizedReplaySample& normalized) const {
+        const diagnostics::NormalizedReplaySample& normalized) {
         const auto& parcels = liveEngine_.parcels();
         const std::size_t start = parcels.size() > kMaximumRenderInputParcels
             ? parcels.size() - kMaximumRenderInputParcels
@@ -354,6 +404,9 @@ private:
         for (std::size_t index = start; index < parcels.size(); ++index) {
             const auto& parcel = parcels[index];
             if (parcel.engineIndex >= engine::kMaximumRecordedEngines) continue;
+            const auto handoff = condensationHandoff(snapshot, parcel);
+            const float nucleationOpacity = engine::contrailNucleationOpacity(
+                parcel.ageSeconds, handoff);
             const double deltaEast = parcel.worldPositionM.x - normalized.worldEastM;
             const double deltaUp = parcel.worldPositionM.y - normalized.worldUpM;
             const double deltaNorth = parcel.worldPositionM.z - normalized.worldNorthM;
@@ -366,8 +419,8 @@ private:
                 snapshot.localPositionM.z - deltaNorth
             };
             item.physicsRadiusM = parcel.radiusM;
-            item.opticalDepth = parcel.opticalDepth;
-            item.normalizedIceMass = parcel.normalizedIceMass;
+            item.opticalDepth = parcel.opticalDepth * nucleationOpacity;
+            item.normalizedIceMass = parcel.normalizedIceMass * nucleationOpacity;
             item.ageSeconds = parcel.ageSeconds;
             inputs.push_back(item);
 
@@ -389,21 +442,29 @@ private:
             const auto* parcel = newest[engineIndex];
             if (!parcel) continue;
 
+            const auto handoff = condensationHandoff(snapshot, *parcel);
+            latestCondensationStartSeconds_ = handoff.visibleStartSeconds;
+            latestCondensationFullSeconds_ = handoff.fullOpacitySeconds;
+            const float handoffSeconds = std::clamp(
+                handoff.visibleStartSeconds,
+                0.05f,
+                0.45f);
+
             render::ContrailRenderInput head;
             head.sourceParcelId = kSyntheticHeadIdBase + engineIndex;
             head.engineIndex = static_cast<std::uint32_t>(engineIndex);
             head.localPositionM = {
                 exhausts[engineIndex].x -
-                    static_cast<double>(snapshot.linearVelocityLocalMps.x) * kHeatBlurHandoffSeconds,
+                    static_cast<double>(snapshot.linearVelocityLocalMps.x) * handoffSeconds,
                 exhausts[engineIndex].y -
-                    static_cast<double>(snapshot.linearVelocityLocalMps.y) * kHeatBlurHandoffSeconds,
+                    static_cast<double>(snapshot.linearVelocityLocalMps.y) * handoffSeconds,
                 exhausts[engineIndex].z -
-                    static_cast<double>(snapshot.linearVelocityLocalMps.z) * kHeatBlurHandoffSeconds
+                    static_cast<double>(snapshot.linearVelocityLocalMps.z) * handoffSeconds
             };
-            head.physicsRadiusM = 0.25f;
-            head.opticalDepth = std::max(parcel->opticalDepth * 0.80f, 0.05f);
-            head.normalizedIceMass = parcel->normalizedIceMass;
-            head.ageSeconds = 0.0f;
+            head.physicsRadiusM = 0.18f;
+            head.opticalDepth = std::max(parcel->opticalDepth * 0.035f, 0.005f);
+            head.normalizedIceMass = std::max(parcel->normalizedIceMass * 0.035f, 0.005f);
+            head.ageSeconds = handoffSeconds;
             head.syntheticHead = true;
             inputs.push_back(head);
         }
@@ -447,7 +508,7 @@ private:
         status.mode = modeName(atmosphereMode_);
         status.geometryStatus = geometryStatus_;
         status.rendererStatus = worldRenderer_.ready() ?
-            "WORLD V4.2 READY" : "LOADING V4.2 ASSETS";
+            "WORLD V5.2 READY" : "LOADING V5.2 ASSETS";
         status.activeParcels = liveEngine_.parcels().size();
         status.emittedParcels = liveEngine_.summary().emittedParcelCount;
         status.expiredParcels = liveEngine_.summary().expiredParcelCount;
@@ -475,7 +536,7 @@ private:
 
         const auto& summary = liveEngine_.summary();
         const auto& planner = latestRenderPlan_.statistics;
-        stream << "FFAtmo World Contrail Visual Debug Report v4.2\n"
+        stream << "FFAtmo World Contrail Visual Debug Report v5.2\n"
                << "status=" << (summary.ok ? "OK" : "ERROR") << '\n'
                << "error=" << summary.error << '\n'
                << "aircraft_name=" << snapshotSource_.aircraftName() << '\n'
@@ -486,15 +547,22 @@ private:
                << "preview_minimum_agl_m=" << kPreviewMinimumAglM << '\n'
                << "preview_minimum_tas_mps=" << kPreviewMinimumTrueAirspeedMps << '\n'
                << "live_emission_interval_seconds=" << kLiveEmissionIntervalSeconds << '\n'
-               << "heat_blur_handoff_seconds=" << kHeatBlurHandoffSeconds << '\n'
+               << "legacy_heat_blur_handoff_seconds=" << kHeatBlurHandoffSeconds << '\n'
+               << "current_condensation_start_seconds="
+               << latestCondensationStartSeconds_ << '\n'
+               << "current_condensation_full_seconds="
+               << latestCondensationFullSeconds_ << '\n'
                << "geometry_status=" << geometryStatus_ << '\n'
                << "geometry_engine_count=" << engineExhaustBodyOffsets_.size() << '\n'
+               << "wake_wingspan_m=" << liveEngine_.wakeAircraftGeometry().wingspanM << '\n'
+               << "wake_reference_mass_kg="
+               << liveEngine_.wakeAircraftGeometry().referenceMassKg << '\n'
                << "world_renderer_ready=" << (worldRenderer_.ready() ? 1 : 0) << '\n'
                << "world_renderer_loaded_objects=" << worldRenderer_.loadedObjectCount() << '\n'
                << "world_renderer_visible_instances=" << worldRenderer_.visibleInstanceCount() << '\n'
-               << "world_renderer_capacity=" << ContrailWorldRenderer::kVisibleCapacity << '\n'
+               << "world_renderer_capacity=" << ContrailParticleRenderer::kVisibleCapacity << '\n'
                << "world_renderer_pooled_instances="
-               << ContrailWorldRenderer::kAssetCount * ContrailWorldRenderer::kInstancesPerAsset << '\n'
+               << ContrailParticleRenderer::kAssetCount * ContrailParticleRenderer::kInstancesPerAsset << '\n'
                << "world_renderer_pool_capacity_drop_count="
                << worldRenderer_.poolCapacityDropCount() << '\n'
                << "simulation_enabled=" << (simulationEnabled_ ? 1 : 0) << '\n'
@@ -565,8 +633,8 @@ private:
                << "deterministic_hash=0x" << std::setw(16)
                << summary.deterministicHash << '\n';
 
-        log("Renderer v4.2 report written to: " + reportPath_.string() + "\n");
-        XPLMSpeakString("FF Atmo Renderer v4 point 2 report exported");
+        log("Renderer v5.2 report written to: " + reportPath_.string() + "\n");
+        XPLMSpeakString("FF Atmo Renderer v5 point 2 report exported");
     }
 
     void cycleAtmosphereMode() {
@@ -622,7 +690,7 @@ private:
             latestTimeline_.activeParcelCount = liveEngine_.parcels().size();
         }
 
-        const auto inputs = buildRenderInputs(latestSnapshot_, simulationNormalized);
+        const auto inputs = buildRenderInputs(simulationSnapshot, simulationNormalized);
         const auto plannerStart = std::chrono::steady_clock::now();
         latestRenderPlan_ = render::planContrailRenderSamples(inputs, renderPlannerSettings_);
         const auto plannerEnd = std::chrono::steady_clock::now();
@@ -653,7 +721,7 @@ private:
             self->visualEnabled_ = !self->visualEnabled_;
             self->overlay_.setEnabled(self->visualEnabled_);
             self->worldRenderer_.setEnabled(self->visualEnabled_);
-            log(std::string("Renderer v4.2 visuals ") +
+            log(std::string("Renderer v5.2 visuals ") +
                 (self->visualEnabled_ ? "enabled.\n" : "disabled.\n"));
         } else if (command == self->toggleSimulationCommand_) {
             self->simulationEnabled_ = !self->simulationEnabled_;
@@ -677,7 +745,7 @@ private:
     void createCommandsAndMenu() {
         toggleOverlayCommand_ = XPLMCreateCommand(
             "ffatmo_contrail_debug/toggle_overlay",
-            "Toggle FFAtmo Renderer v4.2 visuals and status overlay");
+            "Toggle FFAtmo Renderer v5.2 visuals and status overlay");
         toggleSimulationCommand_ = XPLMCreateCommand(
             "ffatmo_contrail_debug/toggle_simulation",
             "Enable or disable live contrail physics");
@@ -713,7 +781,7 @@ private:
             nullptr,
             nullptr);
         XPLMAppendMenuItemWithCommand(
-            menu_, "Renderer v4.2 Visuals + Status: ON / OFF", toggleOverlayCommand_);
+            menu_, "Renderer v5.2 Visuals + Status: ON / OFF", toggleOverlayCommand_);
         XPLMAppendMenuItemWithCommand(
             menu_, "Simulation: ON / OFF", toggleSimulationCommand_);
         XPLMAppendMenuItemWithCommand(
@@ -753,7 +821,7 @@ private:
     engine::LiveContrailEngine liveEngine_;
     render::ContrailRenderPlannerSettings renderPlannerSettings_;
     render::ContrailRenderPlan latestRenderPlan_;
-    ContrailWorldRenderer worldRenderer_;
+    ContrailParticleRenderer worldRenderer_;
     ContrailDebugOverlay overlay_;
 
     engine::SimulatorSnapshot latestSnapshot_ {};
@@ -779,6 +847,8 @@ private:
     double latestPlannerTimeMs_ = 0.0;
     double maximumPlannerTimeMs_ = 0.0;
     double maximumExhaustToFirstVisibleM_ = 0.0;
+    float latestCondensationStartSeconds_ = 0.0f;
+    float latestCondensationFullSeconds_ = 0.0f;
     std::uint64_t sequenceNumber_ = 0;
     std::uint64_t expectedGeneration_ = 0;
     std::uint64_t deliveredGeneration_ = 0;
@@ -798,7 +868,7 @@ PLUGIN_API int XPluginStart(char* outName,
         outDescription,
         256,
         "%s",
-        "Renderer Foundation v4.2 with exhaust handoff and continuity-first world trails");
+        "Renderer Foundation v5.2 native ribbon-particle proof with B738 cooling and wake physics");
     return ffatmo::gRuntime.start() ? 1 : 0;
 }
 

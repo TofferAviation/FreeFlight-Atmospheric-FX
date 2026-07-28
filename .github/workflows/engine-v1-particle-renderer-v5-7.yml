@@ -1,0 +1,175 @@
+name: Build Renderer Foundation v5.7 Filled Cloud Formation
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - agent/levelup-particle-renderer-v5
+    paths:
+      - "tools/patch_v5_7_filled_cloud_renderer.py"
+      - "tools/generate_particle_renderer_v5_7_assets.py"
+      - ".github/workflows/engine-v1-particle-renderer-v5-7.yml"
+  pull_request:
+    branches:
+      - engine/v1
+    paths:
+      - "tools/patch_v5_7_filled_cloud_renderer.py"
+      - "tools/generate_particle_renderer_v5_7_assets.py"
+      - ".github/workflows/engine-v1-particle-renderer-v5-7.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ffatmo-renderer-v57-${{ github.event.pull_request.number || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Check out particle renderer branch
+        uses: actions/checkout@v4
+        with:
+          ref: agent/levelup-particle-renderer-v5
+
+      - name: Apply v5.7 filled cloud runtime
+        shell: pwsh
+        run: |
+          python tools/fix_v5_5_regex_literals.py
+          python tools/patch_v5_4_1_runtime.py
+          python tools/patch_v5_5_parcel_clusters.py
+          python tools/patch_v5_5_1_visibility.py
+          python tools/patch_v5_5_2_cruise_visibility.py
+          python tools/patch_v5_6_connected_cloud_swirl.py
+          python tools/patch_v5_7_filled_cloud_renderer.py
+
+          $renderer = Get-Content src/ContrailParticleRenderer.h -Raw
+          $plugin = Get-Content src/ContrailDebugPlugin.cpp -Raw
+          if ($renderer -match 'XPLMLoadObjectAsync\(') { throw "Unsafe async loader returned" }
+          if ($renderer -notmatch 'deferredNonEmptyFrameCount_ < 3') { throw "Safe-start gate missing" }
+          if ($renderer -notmatch 'kInstancesPerAsset = 1536') { throw "1536-instance stable pool missing" }
+          if ($renderer -notmatch 'atan2\(tx, -tz\)') { throw "Wake-tangent heading alignment missing" }
+          if ($renderer -notmatch 'atan2\(ty, std::max\(horizontal') { throw "Wake-tangent pitch alignment missing" }
+          if ($renderer -notmatch '0\.65f\) / 11\.35f') { throw "v5.7 particle width mapping missing" }
+          if ($renderer -notmatch 'appendTier\(fills\)') { throw "Longitudinal fill tier missing" }
+          if ($renderer -notmatch 'appendTier\(companions\)') { throw "Swirl companion tier missing" }
+          if ($renderer -match 'BILLBOARD_MODE RIBBON') { throw "Ribbon mode returned" }
+          if ($plugin -notmatch 'WORLD V5\.7 READY') { throw "v5.7 overlay label missing" }
+          if ($plugin -notmatch 'billboard field flushed and rebuilt') { throw "Rebase-frame flush missing" }
+
+      - name: Fetch X-Plane Plugin SDK 4.3.0
+        id: sdk
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path third_party | Out-Null
+          $archive = Join-Path $pwd "third_party/XPSDK430.zip"
+          $destination = Join-Path $pwd "third_party/xplane-sdk"
+          for ($attempt = 1; $attempt -le 5; $attempt++) {
+            try {
+              if (Test-Path $archive) { Remove-Item $archive -Force }
+              Invoke-WebRequest -Uri "https://developer.x-plane.com/wp-content/plugins/code-sample-generation/sdk_zip_files/XPSDK430.zip" -OutFile $archive -Headers @{ "User-Agent" = "FFAtmo-GitHub-Actions" }
+              if ((Get-Item $archive).Length -lt 1000000) { throw "SDK archive is unexpectedly small" }
+              break
+            } catch {
+              if ($attempt -eq 5) { throw }
+              Start-Sleep -Seconds (8 * $attempt)
+            }
+          }
+          Expand-Archive -LiteralPath $archive -DestinationPath $destination -Force
+          $header = Get-ChildItem $destination -Recurse -Filter "XPLMPlugin.h" | Where-Object { $_.FullName.Replace('\', '/') -like '*/CHeaders/XPLM/XPLMPlugin.h' } | Select-Object -First 1
+          if (-not $header) { throw "XPLMPlugin.h was not found" }
+          $root = Split-Path (Split-Path (Split-Path $header.FullName -Parent) -Parent) -Parent
+          "path=$root" >> $env:GITHUB_OUTPUT
+
+      - name: Compile and run deterministic tests
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path build-logs | Out-Null
+          cmake -S . -B build-v57 -A x64 -DXPLANE_SDK="${{ steps.sdk.outputs.path }}" -DFFATMO_BUILD_PLUGIN=OFF -DFFATMO_BUILD_COMPANION=OFF -DFFATMO_BUILD_IMGUI_PANEL=OFF -DFFATMO_BUILD_GEOMETRY_DEBUG=OFF -DFFATMO_BUILD_RECORDER_DEBUG=OFF -DFFATMO_BUILD_CONTRAIL_DEBUG=ON -DFFATMO_BUILD_REPLAY_RUNNER=OFF -DFFATMO_BUILD_TESTS=ON -DFFATMO_GIT_REVISION="${{ github.sha }}"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & cmake --build build-v57 --config Release --target FFAtmoContrailDebug ffatmo_core_tests ffatmo_acf_tests ffatmo_replay_tests ffatmo_replay_runner_tests ffatmo_contrail_tests ffatmo_live_contrail_debug_tests ffatmo_contrail_render_planner_tests *> build-logs/build.txt
+          if ($LASTEXITCODE -ne 0) { Get-Content build-logs/build.txt; exit $LASTEXITCODE }
+          & ctest --test-dir build-v57 -C Release --output-on-failure *> build-logs/tests.txt
+          if ($LASTEXITCODE -ne 0) { Get-Content build-logs/tests.txt; exit $LASTEXITCODE }
+          if (-not (Test-Path package/FFAtmoContrailDebug/64/win.xpl)) { throw "v5.7 plugin was not produced" }
+
+      - name: Generate and validate layered particle assets
+        shell: pwsh
+        run: |
+          python tools/generate_particle_renderer_v5_7_assets.py generated-v57-assets
+          @'
+          from pathlib import Path
+          import struct
+
+          pss_path = Path("generated-v57-assets/contrail_v5_7_layered.pss")
+          obj_path = Path("generated-v57-assets/contrail_billboard.obj")
+          png_path = Path("generated-v57-assets/contrail_v5_7_cloud.png")
+          pss = pss_path.read_text(encoding="utf-8")
+          obj = obj_path.read_text(encoding="utf-8")
+          lines = [line.strip() for line in pss.splitlines()]
+          if lines.count("BILLBOARD_MODE AXIAL") != 1:
+              raise RuntimeError("Axial cloud core missing")
+          if lines.count("BILLBOARD_MODE BILLBOARD") != 1:
+              raise RuntimeError("Round cloud halo missing")
+          if lines.count("SUB_EMITTER") != 2:
+              raise RuntimeError("Two attached cloud layers required")
+          if lines.count("PARTICLE") != 2:
+              raise RuntimeError("Two particle definitions required")
+          if "BILLBOARD_MODE RIBBON" in lines:
+              raise RuntimeError("Ribbon mode returned")
+          if "5.200000" not in pss:
+              raise RuntimeError("Axial length ratio missing")
+          if "0.650000 0.650000" not in pss:
+              raise RuntimeError("Minimum particle width missing")
+          if "12.000000 12.000000" not in pss:
+              raise RuntimeError("Maximum particle width missing")
+          if "TRIS" in obj or "TEXTURE_LIT" in obj:
+              raise RuntimeError("Legacy card material returned")
+          data = png_path.read_bytes()
+          width, height = struct.unpack(">II", data[16:24])
+          if (width, height) != (1024, 1024):
+              raise RuntimeError(f"Expected 1024x1024 cloud texture, got {width}x{height}")
+          '@ | python -
+
+      - name: Assemble v5.7 test package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path artifact/FFAtmoContrailDebug/64 | Out-Null
+          New-Item -ItemType Directory -Force -Path artifact/FFAtmoContrailDebug/assets | Out-Null
+          Copy-Item package/FFAtmoContrailDebug/64/win.xpl artifact/FFAtmoContrailDebug/64/win.xpl -Force
+          Copy-Item generated-v57-assets/* artifact/FFAtmoContrailDebug/assets/ -Force
+          @'
+          FFAtmo LevelUp B738 Renderer Foundation v5.7 Filled Cloud Formation
+
+          - Retains the stable 1536-instance parcel ownership field.
+          - Draws an axial ice-cloud core aligned to each physical wake tangent.
+          - Draws a softer round billboard halo from the same stable anchor.
+          - Keeps midpoint fill clouds to remove cruise-speed bead spacing.
+          - Keeps controlled counter-rotating companions through the developing wake.
+          - Retains the detached-wake jump guard and one-frame origin-rebase flush.
+          - Uses the proven 1024x1024 pure-white mip-stable cloud texture.
+          - Does not use Ribbon mode, OBJ cards or custom OpenGL rendering.
+
+          Confirm WORLD V5.7 READY. Use Forced Dry Preview, fly straight for at
+          least 30 seconds, inspect from behind and side-on, then make one gentle bank.
+          '@ | Set-Content artifact/FFAtmoContrailDebug/README_TESTING.txt -Encoding utf8
+          "renderer=engine-v1-levelup-b738-v5.7-filled-cloud-formation" | Set-Content artifact/FFAtmoContrailDebug/BUILD_INFO.txt -Encoding utf8
+          "git_revision=${{ github.sha }}" | Add-Content artifact/FFAtmoContrailDebug/BUILD_INFO.txt -Encoding utf8
+
+      - name: Upload build diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: FFAtmo-v5.7-build-diagnostics
+          path: build-logs
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Upload v5.7 package
+        uses: actions/upload-artifact@v4
+        with:
+          name: FFAtmoContrailDebug-v5.7-win64
+          path: artifact/FFAtmoContrailDebug
+          if-no-files-found: error
+          retention-days: 14

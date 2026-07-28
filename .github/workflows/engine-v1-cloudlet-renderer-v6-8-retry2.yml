@@ -1,0 +1,127 @@
+name: Build Renderer Foundation v6.8 Visible Primary Roll-Up Retry 2
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [agent/levelup-particle-renderer-v5]
+    paths:
+      - "tools/fix_v6_8_fill_matcher.py"
+      - ".github/workflows/engine-v1-cloudlet-renderer-v6-8-retry2.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/levelup-particle-renderer-v5
+
+      - name: Apply v6.8 source stack
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path build-logs | Out-Null
+          $scripts = @(
+            "tools/fix_v5_5_regex_literals.py",
+            "tools/patch_v5_4_1_runtime.py",
+            "tools/patch_v5_5_parcel_clusters.py",
+            "tools/patch_v5_5_1_visibility.py",
+            "tools/patch_v5_5_2_cruise_visibility.py",
+            "tools/patch_v5_6_connected_cloud_swirl.py",
+            "tools/patch_v6_1_cloudlet_renderer.py",
+            "tools/patch_v6_2_filled_cloud_renderer.py",
+            "tools/patch_v6_3_morphology_onset_v2.py",
+            "tools/patch_v6_4_head_endpoint_pool.py",
+            "tools/fix_v6_5_report_matchers.py",
+            "tools/patch_v6_5_handoff_vortex.py",
+            "tools/patch_v6_6_smooth_stable_field.py",
+            "tools/fix_v6_7_report_matcher.py",
+            "tools/patch_v6_7_physics_coupled_rollup.py",
+            "tools/fix_v6_8_diagnostic_reset.py",
+            "tools/fix_v6_8_fill_matcher.py",
+            "tools/patch_v6_8_visible_primary_rollup.py"
+          )
+          foreach ($script in $scripts) {
+            "RUN $script" | Tee-Object -FilePath build-logs/patch.txt -Append
+            & python $script 2>&1 | Tee-Object -FilePath build-logs/patch.txt -Append
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+          $plugin=Get-Content src/ContrailDebugPlugin.cpp -Raw
+          $renderer=Get-Content src/ContrailCloudletRendererV62.h -Raw
+          if ($plugin -notmatch '3D CLOUD V6\.8 VISIBLE ROLLUP READY') { throw "v6.8 identity missing" }
+          if ($plugin -notmatch 'cycle_vortex_gain') { throw "live gain command missing" }
+          if ($renderer -notmatch '0\.24 \* physicalRadius') { throw "primary visible rollup missing" }
+          if ($renderer -notmatch 'wakeVortexRadiusM\) \* 0\.28') { throw "arm physical radius missing" }
+          if ($renderer -notmatch 'budget \* 0\.36') { throw "primary budget missing" }
+          if ($renderer -notmatch 'budget \* 0\.22') { throw "fill budget missing" }
+          if ($renderer -notmatch 'vortexVisualGain_ = 1\.45') { throw "vortex gain missing" }
+
+      - name: Offline silhouette gate
+        shell: pwsh
+        run: |
+          python tools/generate_v6_8_rollup_preview.py generated-v68-preview --gain 1.45 | Tee-Object -FilePath build-logs/offline-preview.txt
+          Get-Content generated-v68-preview/v6_8_rollup_metrics.json
+
+      - name: Generate native assets
+        shell: pwsh
+        run: |
+          python tools/generate_v6_7_vortex_realism_assets.py generated-v68-assets
+          if ((Get-ChildItem generated-v68-assets -Filter '*.obj').Count -ne 8) { throw "expected 8 OBJ assets" }
+
+      - name: Fetch X-Plane SDK
+        id: sdk
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path third_party | Out-Null
+          $archive=Join-Path $pwd "third_party/XPSDK430.zip"
+          $destination=Join-Path $pwd "third_party/xplane-sdk"
+          Invoke-WebRequest -Uri "https://developer.x-plane.com/wp-content/plugins/code-sample-generation/sdk_zip_files/XPSDK430.zip" -OutFile $archive -Headers @{"User-Agent"="FFAtmo-GitHub-Actions"}
+          Expand-Archive -LiteralPath $archive -DestinationPath $destination -Force
+          $header=Get-ChildItem $destination -Recurse -Filter "XPLMPlugin.h" | Where-Object {$_.FullName.Replace('\','/') -like '*/CHeaders/XPLM/XPLMPlugin.h'} | Select-Object -First 1
+          if (-not $header) { throw "XPLMPlugin.h missing" }
+          $root=Split-Path (Split-Path (Split-Path $header.FullName -Parent) -Parent) -Parent
+          "path=$root" >> $env:GITHUB_OUTPUT
+
+      - name: Compile and test
+        shell: pwsh
+        run: |
+          cmake -S . -B build-v68 -A x64 -DXPLANE_SDK="${{ steps.sdk.outputs.path }}" -DFFATMO_BUILD_PLUGIN=OFF -DFFATMO_BUILD_COMPANION=OFF -DFFATMO_BUILD_IMGUI_PANEL=OFF -DFFATMO_BUILD_GEOMETRY_DEBUG=OFF -DFFATMO_BUILD_RECORDER_DEBUG=OFF -DFFATMO_BUILD_CONTRAIL_DEBUG=ON -DFFATMO_BUILD_REPLAY_RUNNER=OFF -DFFATMO_BUILD_TESTS=ON -DFFATMO_GIT_REVISION="${{ github.sha }}"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & cmake --build build-v68 --config Release --target FFAtmoContrailDebug ffatmo_core_tests ffatmo_acf_tests ffatmo_replay_tests ffatmo_replay_runner_tests ffatmo_contrail_tests ffatmo_live_contrail_debug_tests ffatmo_contrail_render_planner_tests *> build-logs/build.txt
+          if ($LASTEXITCODE -ne 0) { Get-Content build-logs/build.txt; exit $LASTEXITCODE }
+          & ctest --test-dir build-v68 -C Release --output-on-failure *> build-logs/tests.txt
+          if ($LASTEXITCODE -ne 0) { Get-Content build-logs/tests.txt; exit $LASTEXITCODE }
+
+      - name: Assemble package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path artifact/FFAtmoContrailDebug/64 | Out-Null
+          New-Item -ItemType Directory -Force -Path artifact/FFAtmoContrailDebug/assets | Out-Null
+          New-Item -ItemType Directory -Force -Path artifact/FFAtmoContrailDebug/diagnostics | Out-Null
+          Copy-Item package/FFAtmoContrailDebug/64/win.xpl artifact/FFAtmoContrailDebug/64/win.xpl -Force
+          Copy-Item generated-v68-assets/* artifact/FFAtmoContrailDebug/assets/ -Force
+          Copy-Item generated-v68-preview/* artifact/FFAtmoContrailDebug/diagnostics/ -Force
+          @'
+          FFAtmo v6.8 Visible Primary Vortex Roll-Up
+          Primary mass + fills now follow the real vortex phase. Edge arms are larger and use the physical wake radius.
+          Live tuning without restart: Plugins > FFAtmo Contrail Visual Debug > Cycle Vortex Visibility.
+          Gain sequence: 1.45x -> 1.95x -> 1.00x -> 1.45x.
+          '@ | Set-Content artifact/FFAtmoContrailDebug/README_TESTING.txt -Encoding utf8
+
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: FFAtmo-v6.8-retry2-diagnostics
+          path: build-logs
+          if-no-files-found: ignore
+
+      - name: Upload v6.8 package
+        uses: actions/upload-artifact@v4
+        with:
+          name: FFAtmoContrailDebug-v6.8-win64
+          path: artifact/FFAtmoContrailDebug
+          if-no-files-found: error
+          retention-days: 14

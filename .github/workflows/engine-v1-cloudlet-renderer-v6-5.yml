@@ -1,0 +1,179 @@
+name: Build Renderer Foundation v6.5 Ice White Vortex Field
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - agent/levelup-particle-renderer-v5
+    paths:
+      - "tools/generate_v6_5_cutout_assets.py"
+      - "tools/patch_v6_5_handoff_vortex.py"
+      - "tools/fix_v6_5_report_matchers.py"
+      - ".github/workflows/engine-v1-cloudlet-renderer-v6-5.yml"
+  pull_request:
+    branches:
+      - engine/v1
+    paths:
+      - "tools/generate_v6_5_cutout_assets.py"
+      - "tools/patch_v6_5_handoff_vortex.py"
+      - "tools/fix_v6_5_report_matchers.py"
+      - ".github/workflows/engine-v1-cloudlet-renderer-v6-5.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ffatmo-cloudlets-v65-${{ github.event.pull_request.number || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Check out renderer branch
+        uses: actions/checkout@v4
+        with:
+          ref: agent/levelup-particle-renderer-v5
+
+      - name: Apply stable wake baseline through v6.5
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path build-logs | Out-Null
+          $scripts = @(
+            "tools/fix_v5_5_regex_literals.py",
+            "tools/patch_v5_4_1_runtime.py",
+            "tools/patch_v5_5_parcel_clusters.py",
+            "tools/patch_v5_5_1_visibility.py",
+            "tools/patch_v5_5_2_cruise_visibility.py",
+            "tools/patch_v5_6_connected_cloud_swirl.py",
+            "tools/patch_v6_1_cloudlet_renderer.py",
+            "tools/patch_v6_2_filled_cloud_renderer.py",
+            "tools/patch_v6_3_morphology_onset_v2.py",
+            "tools/patch_v6_4_head_endpoint_pool.py",
+            "tools/fix_v6_5_report_matchers.py",
+            "tools/patch_v6_5_handoff_vortex.py"
+          )
+          foreach ($script in $scripts) {
+            "RUN $script" | Tee-Object -FilePath build-logs/patch.txt -Append
+            & python $script 2>&1 | Tee-Object -FilePath build-logs/patch.txt -Append
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+          $plugin = Get-Content src/ContrailDebugPlugin.cpp -Raw
+          $renderer = Get-Content src/ContrailCloudletRendererV62.h -Raw
+          $planner = Get-Content src/render/ContrailRenderPlanner.cpp -Raw
+          if ($plugin -notmatch '3D CLOUD V6\.5 VORTEX READY') { throw "v6.5 overlay identity missing" }
+          if ($plugin -notmatch 'ICE_WHITE_VORTEX_FIELD') { throw "v6.5 report identity missing" }
+          if ($plugin -notmatch 'render_material_mode=ALPHA_TEST_CUTOUT') { throw "cutout diagnostic missing" }
+          if ($plugin -notmatch 'youngestRenderableLocal') { throw "live streamline bridge missing" }
+          if ($plugin -notmatch 'synthetic_head_actual_distance_') { throw "live head diagnostics missing" }
+          if ($plugin -notmatch 'kHeatBlurHandoffSeconds = 0\.04f') { throw "short live handoff missing" }
+          if ($planner -notmatch 'syntheticHeadIt') { throw "explicit synthetic-head endpoint lost" }
+          if ($renderer -notmatch 'sample\.ageSeconds >= 3\.0f') { throw "vortex development stage missing" }
+          if ($renderer -notmatch 'maximumSwirlRadiusM_') { throw "vortex radius diagnostic missing" }
+          if ($renderer -notmatch 'kVisibleCapacity = 1024') { throw "fixed capacity lost" }
+          if ($renderer -notmatch '48, 164, 164, 164, 164, 144, 144, 32') { throw "adaptive pool lost" }
+          if ($renderer -cmatch 'xplm_Phase_Modern3D|XPLMRegisterDrawCallback|PARTICLE_SYSTEM|BILLBOARD_MODE|ANIM_billboard') { throw "unsupported renderer path returned" }
+
+      - name: Generate and validate ice-white alpha-test assets
+        shell: pwsh
+        run: |
+          python tools/generate_v6_5_cutout_assets.py generated-v65-assets
+          @'
+          from pathlib import Path
+          import struct, zlib
+          root=Path("generated-v65-assets")
+          ages=["near","young","mature","old"]
+          variants=["soft","dense"]
+          extents={v:[] for v in variants}; occupancy={}
+          def rgba(path):
+              data=path.read_bytes(); w,h=struct.unpack(">II",data[16:24]); pos=8; payload=bytearray()
+              while pos<len(data):
+                  n=struct.unpack(">I",data[pos:pos+4])[0]; kind=data[pos+4:pos+8]
+                  if kind==b"IDAT": payload.extend(data[pos+8:pos+8+n])
+                  pos += 12+n
+                  if kind==b"IEND": break
+              raw=zlib.decompress(bytes(payload)); stride=w*4; out=[]; cur=0
+              for _ in range(h):
+                  if raw[cur]!=0: raise RuntimeError(f"PNG filter unsupported: {path}")
+                  cur+=1; row=raw[cur:cur+stride]; cur+=stride
+                  out.extend(zip(row[0::4],row[1::4],row[2::4],row[3::4]))
+              return w,h,out
+          for age in ages:
+              for variant in variants:
+                  name=f"{age}_{variant}"; obj=(root/f"contrail_cloudlet_{name}.obj").read_text()
+                  if "GLOBAL_no_blend 0.500" not in obj: raise RuntimeError(f"{name}: no alpha test")
+                  if any(t in obj for t in ("ATTR_blend","ATTR_no_cull","PARTICLE_SYSTEM","BILLBOARD","EMITTER","TEXTURE_LIT")): raise RuntimeError(f"{name}: forbidden state")
+                  verts=[tuple(map(float,l.split()[1:4])) for l in obj.splitlines() if l.startswith("VT ")]
+                  if len(verts)!=342: raise RuntimeError(f"{name}: vertex count {len(verts)}")
+                  extents[variant].append((max(v[2] for v in verts)-min(v[2] for v in verts),max(v[0] for v in verts)-min(v[0] for v in verts)))
+                  w,h,pix=rgba(root/f"contrail_cloudlet_{name}.png")
+                  if (w,h)!=(256,256): raise RuntimeError(f"{name}: texture size")
+                  if {p[3] for p in pix}!={0,255}: raise RuntimeError(f"{name}: alpha not binary")
+                  if any(p[:3]!=(255,255,255) for p in pix): raise RuntimeError(f"{name}: RGB not pure white")
+                  occupancy[name]=sum(p[3]==255 for p in pix)/len(pix)
+                  if not 0.12<=occupancy[name]<=0.88: raise RuntimeError(f"{name}: occupancy {occupancy[name]}")
+          for variant in variants:
+              if not all(extents[variant][i][0]<extents[variant][i+1][0] and extents[variant][i][1]<extents[variant][i+1][1] for i in range(3)): raise RuntimeError(f"{variant}: extent growth")
+          for age in ages:
+              if not occupancy[f"{age}_soft"]<occupancy[f"{age}_dense"]: raise RuntimeError(f"{age}: morphology occupancy")
+          print(extents); print(occupancy)
+          '@ | python -
+
+      - name: Fetch X-Plane Plugin SDK 4.3.0
+        id: sdk
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path third_party | Out-Null
+          $archive=Join-Path $pwd "third_party/XPSDK430.zip"; $destination=Join-Path $pwd "third_party/xplane-sdk"
+          for($attempt=1;$attempt -le 5;$attempt++){
+            try { if(Test-Path $archive){Remove-Item $archive -Force}; Invoke-WebRequest -Uri "https://developer.x-plane.com/wp-content/plugins/code-sample-generation/sdk_zip_files/XPSDK430.zip" -OutFile $archive -Headers @{"User-Agent"="FFAtmo-GitHub-Actions"}; if((Get-Item $archive).Length -lt 1000000){throw "SDK archive too small"}; break }
+            catch { if($attempt -eq 5){throw}; Start-Sleep -Seconds (8*$attempt) }
+          }
+          Expand-Archive -LiteralPath $archive -DestinationPath $destination -Force
+          $header=Get-ChildItem $destination -Recurse -Filter "XPLMPlugin.h" | Where-Object {$_.FullName.Replace('\','/') -like '*/CHeaders/XPLM/XPLMPlugin.h'} | Select-Object -First 1
+          if(-not $header){throw "XPLMPlugin.h not found"}; $root=Split-Path (Split-Path (Split-Path $header.FullName -Parent) -Parent) -Parent; "path=$root" >> $env:GITHUB_OUTPUT
+
+      - name: Compile plugin and deterministic tests
+        shell: pwsh
+        run: |
+          cmake -S . -B build-v65 -A x64 -DXPLANE_SDK="${{ steps.sdk.outputs.path }}" -DFFATMO_BUILD_PLUGIN=OFF -DFFATMO_BUILD_COMPANION=OFF -DFFATMO_BUILD_IMGUI_PANEL=OFF -DFFATMO_BUILD_GEOMETRY_DEBUG=OFF -DFFATMO_BUILD_RECORDER_DEBUG=OFF -DFFATMO_BUILD_CONTRAIL_DEBUG=ON -DFFATMO_BUILD_REPLAY_RUNNER=OFF -DFFATMO_BUILD_TESTS=ON -DFFATMO_GIT_REVISION="${{ github.sha }}"
+          if($LASTEXITCODE -ne 0){exit $LASTEXITCODE}
+          & cmake --build build-v65 --config Release --target FFAtmoContrailDebug ffatmo_core_tests ffatmo_acf_tests ffatmo_replay_tests ffatmo_replay_runner_tests ffatmo_contrail_tests ffatmo_live_contrail_debug_tests ffatmo_contrail_render_planner_tests *> build-logs/build.txt
+          if($LASTEXITCODE -ne 0){Get-Content build-logs/build.txt;exit $LASTEXITCODE}
+          & ctest --test-dir build-v65 -C Release --output-on-failure *> build-logs/tests.txt
+          if($LASTEXITCODE -ne 0){Get-Content build-logs/tests.txt;exit $LASTEXITCODE}
+          if(-not(Test-Path package/FFAtmoContrailDebug/64/win.xpl)){throw "v6.5 plugin missing"}
+
+      - name: Assemble v6.5 test package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path artifact/FFAtmoContrailDebug/64 | Out-Null; New-Item -ItemType Directory -Force -Path artifact/FFAtmoContrailDebug/assets | Out-Null
+          Copy-Item package/FFAtmoContrailDebug/64/win.xpl artifact/FFAtmoContrailDebug/64/win.xpl -Force; Copy-Item generated-v65-assets/* artifact/FFAtmoContrailDebug/assets/ -Force
+          @'
+          FFAtmo Renderer Foundation v6.5 - Ice White Cutout + Live Handoff + Vortex Roll-Up
+          - alpha-test cutout instead of translucent OBJ blending
+          - pure ice-white binary-alpha cloud material
+          - live exhaust-to-youngest-renderable-wake bridge
+          - shorter 8-14 m visual onset while thermodynamic timing stays physical
+          - controlled opposite left/right cross-sectional vortex roll-up from ~3-30 s
+          - primary cloud field remains on the fluid-solver centreline
+          Confirm: 3D CLOUD V6.5 VORTEX READY
+          '@ | Set-Content artifact/FFAtmoContrailDebug/README_TESTING.txt -Encoding utf8
+          "renderer=engine-v1-levelup-b738-v6.5-ice-white-cutout-vortex" | Set-Content artifact/FFAtmoContrailDebug/BUILD_INFO.txt -Encoding utf8; "git_revision=${{ github.sha }}" | Add-Content artifact/FFAtmoContrailDebug/BUILD_INFO.txt -Encoding utf8
+
+      - name: Upload build diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: FFAtmo-v6.5-build-diagnostics
+          path: build-logs
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Upload v6.5 package
+        uses: actions/upload-artifact@v4
+        with:
+          name: FFAtmoContrailDebug-v6.5-win64
+          path: artifact/FFAtmoContrailDebug
+          if-no-files-found: error
+          retention-days: 14

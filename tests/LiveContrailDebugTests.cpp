@@ -1,4 +1,5 @@
 #include "diagnostics/LiveSnapshotNormalizer.h"
+#include "engine/ContrailCondensationModel.h"
 #include "engine/ContrailSimulation.h"
 #include "engine/LiveContrailEngine.h"
 #include "engine/WakeFluidSolver.h"
@@ -146,6 +147,34 @@ int main() {
     require(normalizedPaused.physicsDeltaSeconds == 0.0,
             "pause freezes live physics clock");
 
+    const auto coldHumidHandoff = engine::calculateContrailCondensationHandoff(
+        228.0f, 115.0f, 30000.0f, 390.0f, 1.10f, 230.0f);
+    const auto warmDryHandoff = engine::calculateContrailCondensationHandoff(
+        240.0f, 50.0f, 30000.0f, 390.0f, 1.10f, 230.0f);
+    require(coldHumidHandoff.visibleStartSeconds < warmDryHandoff.visibleStartSeconds,
+            "cold humid air begins visible condensation sooner");
+    require(coldHumidHandoff.fullOpacitySeconds < warmDryHandoff.fullOpacitySeconds,
+            "cold humid air reaches established contrail opacity sooner");
+    require(coldHumidHandoff.visibleStartSeconds >= 0.08f &&
+                coldHumidHandoff.visibleStartSeconds <= 0.38f,
+            "nucleation start remains inside the live-renderer safety bounds");
+    require(warmDryHandoff.fullOpacitySeconds > warmDryHandoff.visibleStartSeconds,
+            "condensation handoff always has a positive opacity ramp");
+    require(engine::contrailNucleationOpacity(
+                coldHumidHandoff.visibleStartSeconds - 0.01f,
+                coldHumidHandoff) == 0.0f,
+            "hot cooling-zone exhaust remains visually clear");
+    const float midOpacity = engine::contrailNucleationOpacity(
+        0.5f * (coldHumidHandoff.visibleStartSeconds +
+                coldHumidHandoff.fullOpacitySeconds),
+        coldHumidHandoff);
+    require(midOpacity > 0.45f && midOpacity < 0.55f,
+            "nucleation opacity uses a smooth midpoint handoff");
+    require(engine::contrailNucleationOpacity(
+                coldHumidHandoff.fullOpacitySeconds + 0.01f,
+                coldHumidHandoff) == 1.0f,
+            "established contrail reaches full formation opacity");
+
     engine::WakeFluidAircraftGeometry aircraft;
     aircraft.wingspanM = 35.8f;
     aircraft.referenceMassKg = 65000.0f;
@@ -264,6 +293,6 @@ int main() {
     require(observedRollup,
             "live parcels receive finite-core vortex displacement");
 
-    std::cout << "FFAtmo Wake Fluid Simulation v1 tests passed\n";
+    std::cout << "FFAtmo Wake Fluid Simulation v1 and B738 nucleation tests passed\n";
     return 0;
 }

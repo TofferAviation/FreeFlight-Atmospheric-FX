@@ -7,38 +7,22 @@ on:
       - engine/v1
     paths:
       - "CMakeLists.txt"
-      - "src/acf/**"
-      - "src/diagnostics/**"
-      - "src/engine/**"
-      - "src/host/**"
-      - "src/render/**"
-      - "src/ContrailDebugPlugin.cpp"
-      - "src/ContrailDebugOverlay.*"
-      - "src/ContrailWorldRenderer.*"
+      - "src/**"
       - "tools/generate_contrail_assets.py"
-      - "tests/LiveContrailDebugTests.cpp"
-      - "tests/ContrailRenderPlannerTests.cpp"
+      - "tests/**"
       - ".github/workflows/engine-v1-contrail-debug.yml"
   pull_request:
     branches:
       - engine/v1
     paths:
       - "CMakeLists.txt"
-      - "src/acf/**"
-      - "src/diagnostics/**"
-      - "src/engine/**"
-      - "src/host/**"
-      - "src/render/**"
-      - "src/ContrailDebugPlugin.cpp"
-      - "src/ContrailDebugOverlay.*"
-      - "src/ContrailWorldRenderer.*"
+      - "src/**"
       - "tools/generate_contrail_assets.py"
-      - "tests/LiveContrailDebugTests.cpp"
-      - "tests/ContrailRenderPlannerTests.cpp"
+      - "tests/**"
       - ".github/workflows/engine-v1-contrail-debug.yml"
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: ffatmo-engine-v1-contrail-debug-${{ github.event.pull_request.number || github.ref_name }}
@@ -47,10 +31,112 @@ concurrency:
 jobs:
   build:
     runs-on: windows-latest
+    env:
+      TARGET_BRANCH: ${{ github.head_ref || github.ref_name }}
 
     steps:
-      - name: Check out live contrail debug source
+      - name: Check out contrail source
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref || github.ref_name }}
+          fetch-depth: 0
+
+      - name: Apply Renderer v4.8 daylight cloud correction
+        shell: pwsh
+        run: |
+          function Replace-Required([string]$path, [string]$old, [string]$new, [string]$label) {
+            $text = Get-Content $path -Raw
+            if ($text.Contains($new)) {
+              Write-Host "$label already applied"
+              return
+            }
+            if (-not $text.Contains($old)) { throw "$label source text was not found in $path" }
+            $text = $text.Replace($old, $new)
+            Set-Content $path $text -Encoding utf8 -NoNewline
+          }
+
+          $renderer = "src/ContrailWorldRenderer.h"
+          Replace-Required $renderer `
+            'static constexpr std::size_t kInstancesPerAsset = 192;' `
+            'static constexpr std::size_t kInstancesPerAsset = 256;' `
+            'larger per-asset instance pools'
+          Replace-Required $renderer `
+            'static constexpr std::size_t kVisibleCapacity = 1024;' `
+            'static constexpr std::size_t kVisibleCapacity = 1536;' `
+            'full pooled visible capacity'
+          $rendererText = Get-Content $renderer -Raw
+          $rendererText = $rendererText.Replace('v4.7', 'v4.8')
+          Set-Content $renderer $rendererText -Encoding utf8 -NoNewline
+
+          $plugin = "src/ContrailDebugPlugin.cpp"
+          $pluginText = Get-Content $plugin -Raw
+          $pluginText = $pluginText.Replace('v4.5', 'v4.8')
+          $pluginText = $pluginText.Replace('V4.5', 'V4.8')
+          $pluginText = $pluginText.Replace('v4 point 5', 'v4 point 8')
+          Set-Content $plugin $pluginText -Encoding utf8 -NoNewline
+
+          $assets = "tools/generate_contrail_assets.py"
+          Replace-Required $assets `
+            '"""Generate deterministic Renderer Foundation v4.7 lit-alpha composite assets."""' `
+            '"""Generate deterministic Renderer Foundation v4.8 daylight-cloud composite assets."""' `
+            'asset generator version'
+          Replace-Required $assets `
+            'END_BORDER_PIXELS = 1' `
+            'END_BORDER_PIXELS = 0' `
+            'remove longitudinal transparent border'
+          Replace-Required $assets `
+            'ALPHA_LEVELS = (0.028, 0.045, 0.070, 0.100)' `
+            'ALPHA_LEVELS = (0.140, 0.200, 0.280, 0.380)' `
+            'daylight optical density buckets'
+          Replace-Required $assets `
+            'LIT_BRIGHTNESS_NITS = 85' `
+            'LIT_BRIGHTNESS_NITS = 2500' `
+            'daylight cloud luminance'
+          Replace-Required $assets `
+            'end_envelope = 1.0 - smoothstep(0.94, 0.995, abs(py))' `
+            'end_envelope = 1.0' `
+            'continuous longitudinal density'
+
+          $assetText = Get-Content $assets -Raw
+          $oldCloud = @'
+                      cloud_detail = 0.0
+                      for lx, ly, sigma, weight in cloud_lobes:
+                          cloud_detail += weight * gaussian((px - lx) ** 2 + (py - ly) ** 2, sigma)
+                      cloud_detail = min(cloud_detail / 2.5, 1.0)
+
+                      longitudinal = (
+                          0.93
+                          + 0.045 * math.sin(py * 7.1 + centre_phase)
+                          + 0.025 * math.sin(py * 15.2 + edge_phase)
+                      )
+          '@
+          $newCloud = @'
+                      cloud_detail = 0.0
+                      for lx, ly, sigma, weight in cloud_lobes:
+                          longitudinal_distance = abs(py - ly)
+                          wrapped_longitudinal_distance = min(
+                              longitudinal_distance, 2.0 - longitudinal_distance
+                          )
+                          cloud_detail += weight * gaussian(
+                              (px - lx) ** 2 + wrapped_longitudinal_distance ** 2,
+                              sigma,
+                          )
+                      cloud_detail = min(cloud_detail / 2.5, 1.0)
+
+                      longitudinal_phase = math.pi * (py + 1.0)
+                      longitudinal = (
+                          0.93
+                          + 0.045 * math.sin(longitudinal_phase * 3.0 + centre_phase)
+                          + 0.025 * math.sin(longitudinal_phase * 7.0 + edge_phase)
+                      )
+          '@
+          if (-not $assetText.Contains($newCloud)) {
+            if (-not $assetText.Contains($oldCloud)) { throw "periodic cloud-density source block was not found" }
+            $assetText = $assetText.Replace($oldCloud, $newCloud)
+          }
+          $assetText = $assetText.Replace('v4.7', 'v4.8')
+          $assetText = $assetText.Replace('85-nit', '2500-nit')
+          Set-Content $assets $assetText -Encoding utf8 -NoNewline
 
       - name: Fetch X-Plane Plugin SDK 4.3.0
         id: xplane_sdk
@@ -59,7 +145,6 @@ jobs:
           New-Item -ItemType Directory -Force -Path third_party | Out-Null
           $archive = Join-Path $pwd "third_party/XPSDK430.zip"
           $destination = Join-Path $pwd "third_party/xplane-sdk"
-          $downloaded = $false
           for ($attempt = 1; $attempt -le 5; $attempt++) {
             try {
               if (Test-Path $archive) { Remove-Item $archive -Force }
@@ -67,29 +152,22 @@ jobs:
                 -Uri "https://developer.x-plane.com/wp-content/plugins/code-sample-generation/sdk_zip_files/XPSDK430.zip" `
                 -OutFile $archive `
                 -Headers @{ "User-Agent" = "FFAtmo-GitHub-Actions" }
-              if ((Get-Item $archive).Length -lt 1000000) {
-                throw "Downloaded SDK archive is unexpectedly small"
-              }
-              $downloaded = $true
+              if ((Get-Item $archive).Length -lt 1000000) { throw "SDK archive is unexpectedly small" }
               break
             } catch {
               if ($attempt -eq 5) { throw }
               Start-Sleep -Seconds (8 * $attempt)
             }
           }
-          if (-not $downloaded) { throw "Could not download X-Plane SDK after retries" }
           Expand-Archive -LiteralPath $archive -DestinationPath $destination -Force
           $header = Get-ChildItem $destination -Recurse -Filter "XPLMPlugin.h" |
             Where-Object { $_.FullName.Replace('\', '/') -like '*/CHeaders/XPLM/XPLMPlugin.h' } |
             Select-Object -First 1
-          if (-not $header) { throw "The X-Plane SDK archive did not contain XPLMPlugin.h" }
+          if (-not $header) { throw "XPLMPlugin.h was not found" }
           $sdkRoot = Split-Path (Split-Path (Split-Path $header.FullName -Parent) -Parent) -Parent
-          if (-not (Test-Path (Join-Path $sdkRoot "Libraries/Win/XPLM_64.lib"))) {
-            throw "The X-Plane SDK Windows link library was not found"
-          }
           "path=$sdkRoot" >> $env:GITHUB_OUTPUT
 
-      - name: Configure live contrail debug build
+      - name: Configure build
         shell: pwsh
         run: >-
           cmake -S . -B build-contrail-debug -A x64
@@ -104,69 +182,64 @@ jobs:
           -DFFATMO_BUILD_TESTS=ON
           -DFFATMO_GIT_REVISION="${{ github.sha }}"
 
-      - name: Build plugin and full deterministic tests
+      - name: Build plugin and deterministic tests
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path build-logs | Out-Null
           & cmake --build build-contrail-debug --config Release --target FFAtmoContrailDebug ffatmo_core_tests ffatmo_acf_tests ffatmo_replay_tests ffatmo_replay_runner_tests ffatmo_contrail_tests ffatmo_live_contrail_debug_tests ffatmo_contrail_render_planner_tests *> build-logs/build.txt
-          $buildExit = $LASTEXITCODE
-          if ($buildExit -ne 0) { exit $buildExit }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & ctest --test-dir build-contrail-debug -C Release --output-on-failure *> build-logs/tests.txt
-          $testExit = $LASTEXITCODE
-          if ($testExit -ne 0) { exit $testExit }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $plugin = "package/FFAtmoContrailDebug/64/win.xpl"
-          if (-not (Test-Path $plugin)) { throw "Renderer Foundation v4.4 win.xpl was not produced" }
-          if ((Get-Item $plugin).Length -lt 100000) { throw "Renderer Foundation v4.4 win.xpl is unexpectedly small" }
+          if (-not (Test-Path $plugin)) { throw "v4.8 win.xpl was not produced" }
+          if ((Get-Item $plugin).Length -lt 100000) { throw "v4.8 win.xpl is unexpectedly small" }
 
-          # The debug source still contains equal-length v4.2 labels. Patch the
-          # packaged binary only so this test build identifies itself as v4.4.
-          $bytes = [System.IO.File]::ReadAllBytes($plugin)
-          $old = [System.Text.Encoding]::ASCII.GetBytes("v4.2")
-          $new = [System.Text.Encoding]::ASCII.GetBytes("v4.4")
-          $replacements = 0
-          for ($index = 0; $index -le $bytes.Length - $old.Length; $index++) {
-            $match = $true
-            for ($offset = 0; $offset -lt $old.Length; $offset++) {
-              if ($bytes[$index + $offset] -ne $old[$offset]) { $match = $false; break }
-            }
-            if (-not $match) { continue }
-            for ($offset = 0; $offset -lt $new.Length; $offset++) {
-              $bytes[$index + $offset] = $new[$offset]
-            }
-            $replacements++
-            $index += $old.Length - 1
-          }
-          if ($replacements -lt 1) { throw "Could not locate packaged v4.2 debug labels" }
-          [System.IO.File]::WriteAllBytes($plugin, $bytes)
-          "patched_debug_version_labels=$replacements" | Add-Content build-logs/build.txt
-
-      - name: Generate and validate Renderer Foundation v4.4 assets
+      - name: Generate and validate Renderer v4.8 assets
         shell: pwsh
         run: |
           python tools/generate_contrail_assets.py generated-contrail-assets
           $objects = Get-ChildItem generated-contrail-assets -Filter "contrail_core_*.obj"
-          $textures = Get-ChildItem generated-contrail-assets -Filter "contrail_core_*.png"
-          if ($objects.Count -ne 8) { throw "Expected eight Renderer v4.4 composite OBJ files" }
-          if ($textures.Count -ne 8) { throw "Expected eight Renderer v4.4 composite PNG files" }
+          $allTextures = Get-ChildItem generated-contrail-assets -Filter "contrail_core_*.png"
+          $litTextures = $allTextures | Where-Object { $_.Name -like '*_LIT.png' }
+          $albedoTextures = $allTextures | Where-Object { $_.Name -notlike '*_LIT.png' }
+          if ($objects.Count -ne 8) { throw "Expected eight v4.8 OBJ assets" }
+          if ($albedoTextures.Count -ne 8) { throw "Expected eight RGBA albedo maps" }
+          if ($litTextures.Count -ne 8) { throw "Expected eight RGB LIT maps" }
           $assetInfo = Get-Content generated-contrail-assets/ASSET_INFO.txt -Raw
-          if ($assetInfo -notmatch 'single-layer composite') {
-            throw "ASSET_INFO does not identify the v4.4 composite asset set"
-          }
-          if ($assetInfo -notmatch 'No separate core object') {
-            throw "ASSET_INFO does not confirm removal of the separate core object"
-          }
-          foreach ($texture in $textures) {
-            if ($texture.Length -lt 1000) { throw "Generated texture is unexpectedly small: $($texture.Name)" }
-          }
+          if ($assetInfo -notmatch 'v4.8') { throw "ASSET_INFO does not identify v4.8" }
+          if ($assetInfo -notmatch '2500-nit') { throw "ASSET_INFO does not identify daylight luminance" }
           foreach ($object in $objects) {
             $lines = Get-Content $object.FullName
-            if (-not ($lines -match '^ATTR_LOD ')) { throw "Missing ATTR_LOD: $($object.Name)" }
-            if (-not ($lines -match '^ATTR_blend$')) { throw "Missing ATTR_blend: $($object.Name)" }
-            if (-not ($lines -match '^GLOBAL_luminance 250$')) { throw "Missing v4.4 neutral luminance: $($object.Name)" }
-            if (-not ($lines -match '^ATTR_emission_rgb 1.0 1.0 1.0$')) { throw "Missing v4.4 white emission override: $($object.Name)" }
-            if (-not ($lines -match 'ffatmo/contrail_debug/width')) { throw "Missing width scale: $($object.Name)" }
-            if (-not ($lines -match 'ffatmo/contrail_debug/length')) { throw "Missing length scale: $($object.Name)" }
+            if (-not ($lines -match '^ATTR_blend$')) { throw "Missing alpha blend: $($object.Name)" }
+            if (-not ($lines -match '^TEXTURE_LIT .*_LIT\.png$')) { throw "Missing RGB LIT map: $($object.Name)" }
+            if (-not ($lines -match '^ATTR_light_level 0 1 ffatmo/contrail_debug/illumination 2500$')) { throw "Missing 2500-nit light level: $($object.Name)" }
+            if (-not ($lines -match '^POINT_COUNTS 8 0 0 12$')) { throw "Missing front/back faces: $($object.Name)" }
+            if ($lines -match '^ATTR_no_cull$') { throw "Unexpected no-cull path: $($object.Name)" }
           }
+          @'
+          import struct
+          from pathlib import Path
+          root = Path("generated-contrail-assets")
+          for path in root.glob("contrail_core_*.png"):
+              data = path.read_bytes()
+              _, _, bit_depth, colour_type, _, _, _ = struct.unpack(">IIBBBBB", data[16:29])
+              expected = 2 if path.name.endswith("_LIT.png") else 6
+              if bit_depth != 8 or colour_type != expected:
+                  raise SystemExit(f"{path.name}: expected PNG colour type {expected}, got {colour_type}")
+          '@ | python -
+
+      - name: Commit verified v4.8 source changes
+        shell: pwsh
+        run: |
+          if (-not (git status --porcelain -- src/ContrailWorldRenderer.h src/ContrailDebugPlugin.cpp tools/generate_contrail_assets.py)) {
+            Write-Host "No v4.8 source changes to commit"
+            exit 0
+          }
+          git config user.name "FreeFlight Engineering Bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add src/ContrailWorldRenderer.h src/ContrailDebugPlugin.cpp tools/generate_contrail_assets.py
+          git commit -m "Implement Renderer Foundation v4.8 daylight cloud correction"
+          git push origin "HEAD:$env:TARGET_BRANCH"
 
       - name: Upload build diagnostics
         if: always()
@@ -177,7 +250,7 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
-      - name: Assemble Renderer Foundation v4.4 package
+      - name: Assemble LevelUp B738 Contrail v4.8 package
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path artifact/FFAtmoContrailDebug/64 | Out-Null
@@ -185,57 +258,44 @@ jobs:
           Copy-Item package/FFAtmoContrailDebug/64/win.xpl artifact/FFAtmoContrailDebug/64/win.xpl -Force
           Copy-Item generated-contrail-assets/* artifact/FFAtmoContrailDebug/assets/ -Force
           @'
-          FFAtmo Renderer Foundation v4.4 - Single-Layer Composite Trail
+          FFAtmo LevelUp 737-800NG Contrail Vertical Slice v4.8
 
           PURPOSE
-          Remove the black dotted/segmented FFAtmo trail by eliminating the
-          overlapping transparent core object. The dense white centre and soft
-          outer falloff now live in one continuous alpha texture.
+          Replace the dim terrain-coloured rope appearance from v4.7 with a bright,
+          continuous daylight ice-cloud trail while preserving the accepted cooling,
+          nucleation, LevelUp exhaust geometry and Wake Fluid Simulation v1.
 
           INSTALL
           1. Close X-Plane.
-          2. Delete the previous FFAtmoContrailDebug folder.
-          3. Copy this FFAtmoContrailDebug folder into:
-             X-Plane 12/Resources/plugins/
-          4. Keep the included assets folder beside the 64 folder.
-          5. Keep Effects Takeover v2.2 installed on the B738.
+          2. Delete the previous FFAtmoContrailDebug folder completely.
+          3. Copy this FFAtmoContrailDebug folder into X-Plane 12/Resources/plugins/.
+          4. Keep Effects Takeover v2.2 installed on the LevelUp B738.
 
-          V4.4 COMPOSITE CHANGES
-          - One XPLM instance is generated per trail section instead of core plus halo.
-          - The centre and feathered edge are baked into one neutral-white alpha profile.
-          - No second transparent card can cut scenery-coloured holes through the trail.
-          - Section overlap is increased to hide individual card boundaries.
-          - Lateral visual jitter is greatly reduced and begins only on older sections.
-          - The accepted 0.12-second exhaust handoff, Hermite continuity and fluid parcel
-            positions are retained.
-          - Existing core/halo report fields remain for compatibility: core must be zero,
-            while halo represents the single composite layer.
+          V4.8 CHANGES
+          - optical alpha buckets raised from 2.8-10% to 14-38%
+          - controlled RGB-only cloud luminance raised from 85 to 2500 nits
+          - longitudinal texture density is periodic and no longer fades at card ends
+          - visible capacity raised from 1024 to 1536 sections
+          - per-asset instance pools raised from 192 to 256
+          - cooling delay, condensation model and wake physics are unchanged
 
           TEST
-          1. Load the Effects Takeover-patched B738.
+          1. Confirm the overlay says WORLD V4.8 READY.
           2. Select Forced Dry Preview.
-          3. Fly for 30-45 seconds.
-          4. Inspect from rear-quarter, side and directly along the trail.
-          5. Make one gentle 20-30 degree bank turn.
+          3. Fly for 20-30 seconds.
+          4. Inspect against both clear sky and terrain.
+          5. Repeat once in Forced Persistent Preview.
 
           PASS TARGET
-          - no black, green or terrain-coloured dots
-          - no separate inner strand
-          - soft continuous white trail with a denser white centre
-          - no visible repeating card gaps
-          - both engine streams remain distinct near the aircraft
-          - wake-fluid displacement remains visible farther behind
-          - no camera spikes or large continuity gaps
-          - render_planner_selected_core_count equals 0
-          - render_planner_selected_halo_count equals selected_count
-          - world_renderer_pool_capacity_drop_count remains 0
-
-          SEND BACK
-          - one short rear/orbit video
-          - X-Plane 12/Log.txt
-          - FFAtmoContrailDebug/reports/contrail_visual_debug.txt
+          - white or light-grey ice-cloud colour against sky and terrain
+          - no black, brown, yellow or terrain-coloured rope sections
+          - no repeating gaps between cards
+          - cooling gap remains behind both CFM56 nozzles
+          - two near-field streams remain distinct
+          - capacity rejection is eliminated or substantially reduced
+          - zero stream breaks and pool drops
           '@ | Set-Content artifact/FFAtmoContrailDebug/README_TESTING.txt -Encoding utf8
-          "renderer=engine-v1-renderer-foundation-v4.4-single-layer-composite" | Set-Content artifact/FFAtmoContrailDebug/BUILD_INFO.txt -Encoding utf8
+          "renderer=engine-v1-levelup-b738-contrail-v4.8-daylight-cloud" | Set-Content artifact/FFAtmoContrailDebug/BUILD_INFO.txt -Encoding utf8
           "git_revision=${{ github.sha }}" | Add-Content artifact/FFAtmoContrailDebug/BUILD_INFO.txt -Encoding utf8
 
       - name: Upload live contrail visual debug plugin

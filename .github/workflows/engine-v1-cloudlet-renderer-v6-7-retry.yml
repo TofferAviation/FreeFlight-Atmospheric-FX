@@ -1,0 +1,215 @@
+name: Build Renderer Foundation v6.7 Physics Coupled Vortex Roll-Up Retry
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - agent/levelup-particle-renderer-v5
+    paths:
+      - "tools/fix_v6_7_report_matcher.py"
+      - ".github/workflows/engine-v1-cloudlet-renderer-v6-7-retry.yml"
+  pull_request:
+    branches:
+      - engine/v1
+    paths:
+      - "tools/fix_v6_7_report_matcher.py"
+      - ".github/workflows/engine-v1-cloudlet-renderer-v6-7-retry.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ffatmo-cloudlets-v67-retry-${{ github.event.pull_request.number || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Check out renderer branch
+        uses: actions/checkout@v4
+        with:
+          ref: agent/levelup-particle-renderer-v5
+
+      - name: Apply stable wake baseline through v6.7
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path build-logs | Out-Null
+          $scripts = @(
+            "tools/fix_v5_5_regex_literals.py",
+            "tools/patch_v5_4_1_runtime.py",
+            "tools/patch_v5_5_parcel_clusters.py",
+            "tools/patch_v5_5_1_visibility.py",
+            "tools/patch_v5_5_2_cruise_visibility.py",
+            "tools/patch_v5_6_connected_cloud_swirl.py",
+            "tools/patch_v6_1_cloudlet_renderer.py",
+            "tools/patch_v6_2_filled_cloud_renderer.py",
+            "tools/patch_v6_3_morphology_onset_v2.py",
+            "tools/patch_v6_4_head_endpoint_pool.py",
+            "tools/fix_v6_5_report_matchers.py",
+            "tools/patch_v6_5_handoff_vortex.py",
+            "tools/patch_v6_6_smooth_stable_field.py",
+            "tools/fix_v6_7_report_matcher.py",
+            "tools/patch_v6_7_physics_coupled_rollup.py"
+          )
+          foreach ($script in $scripts) {
+            "RUN $script" | Tee-Object -FilePath build-logs/patch.txt -Append
+            & python $script 2>&1 | Tee-Object -FilePath build-logs/patch.txt -Append
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+
+          $plugin = Get-Content src/ContrailDebugPlugin.cpp -Raw
+          $renderer = Get-Content src/ContrailCloudletRendererV62.h -Raw
+          $plannerH = Get-Content src/render/ContrailRenderPlanner.h -Raw
+          $plannerCpp = Get-Content src/render/ContrailRenderPlanner.cpp -Raw
+          if ($plugin -notmatch '3D CLOUD V6\.7 WAKE ROLLUP READY') { throw "v6.7 overlay identity missing" }
+          if ($plugin -notmatch 'PHYSICS_COUPLED_VORTEX_ROLLUP') { throw "v6.7 report identity missing" }
+          if ($plugin -notmatch 'vortex_sampling_mode=PHYSICS_COUPLED_ARMS') { throw "physics coupled mode diagnostic missing" }
+          if ($plugin -notmatch 'wake_visual_model=PRIMARY_VORTEX_PLUS_SECONDARY_WAKE') { throw "secondary wake mode diagnostic missing" }
+          if ($plugin -notmatch 'item\.wakeVortexPhaseRad') { throw "live Wake Fluid phase is not exported" }
+          if ($plannerH -notmatch 'wakeVortexPhaseRad') { throw "planner wake state fields missing" }
+          if ($plannerCpp -notmatch 'mixAngleRadians') { throw "circular wake phase interpolation missing" }
+          if ($plannerCpp -notmatch 'sample\.wakeInitialized = wakeInitialized') { throw "wake state propagation missing" }
+          if ($renderer -notmatch 'vortexArmId') { throw "vortex arm IDs missing" }
+          if ($renderer -notmatch 'secondaryWakeId') { throw "secondary wake IDs missing" }
+          if ($renderer -notmatch 'sample\.wakeVortexPhaseRad') { throw "renderer does not use real vortex phase" }
+          if ($renderer -notmatch 'sample\.wakeCirculationM2ps') { throw "renderer does not use real circulation" }
+          if ($renderer -notmatch 'emitArm\(1ULL') { throw "first vortex roll arm missing" }
+          if ($renderer -notmatch 'emitArm\(2ULL') { throw "second vortex roll arm missing" }
+          if ($renderer -notmatch 'budget \* 0\.52') { throw "v6.7 primary budget missing" }
+          if ($renderer -notmatch 'budget \* 0\.30') { throw "v6.7 fill budget missing" }
+          if ($renderer -notmatch '52, 152, 176, 160, 190, 142, 144, 8') { throw "v6.7 pool profile missing" }
+          if ($renderer -notmatch 'kVisibleCapacity = 1024') { throw "fixed 1024 capacity lost" }
+          if ($renderer -cmatch 'xplm_Phase_Modern3D|XPLMRegisterDrawCallback|PARTICLE_SYSTEM|BILLBOARD_MODE|ANIM_billboard') { throw "unsupported renderer path returned" }
+
+      - name: Generate and validate v6.7 compact ice cloud assets
+        shell: pwsh
+        run: |
+          python tools/generate_v6_7_vortex_realism_assets.py generated-v67-assets
+          @'
+          from pathlib import Path
+          import struct, zlib
+          root=Path("generated-v67-assets")
+          ages=["near","young","mature","old"]
+          variants=["soft","dense"]
+          extents={v:[] for v in variants}; occupancy={}
+          def rgba(path):
+              data=path.read_bytes(); w,h=struct.unpack(">II",data[16:24]); pos=8; payload=bytearray()
+              while pos<len(data):
+                  n=struct.unpack(">I",data[pos:pos+4])[0]; kind=data[pos+4:pos+8]
+                  if kind==b"IDAT": payload.extend(data[pos+8:pos+8+n])
+                  pos += 12+n
+                  if kind==b"IEND": break
+              raw=zlib.decompress(bytes(payload)); stride=w*4; out=[]; cur=0
+              for _ in range(h):
+                  if raw[cur]!=0: raise RuntimeError(f"PNG filter unsupported: {path}")
+                  cur+=1; row=raw[cur:cur+stride]; cur+=stride
+                  out.extend(zip(row[0::4],row[1::4],row[2::4],row[3::4]))
+              return w,h,out
+          for age in ages:
+              for variant in variants:
+                  name=f"{age}_{variant}"; obj=(root/f"contrail_cloudlet_{name}.obj").read_text()
+                  if "GLOBAL_no_blend 0.500" not in obj: raise RuntimeError(f"{name}: alpha test lost")
+                  if any(t in obj for t in ("ATTR_blend","ATTR_no_cull","PARTICLE_SYSTEM","BILLBOARD","EMITTER","TEXTURE_LIT")):
+                      raise RuntimeError(f"{name}: forbidden state")
+                  verts=[tuple(map(float,l.split()[1:4])) for l in obj.splitlines() if l.startswith("VT ")]
+                  if len(verts)!=758: raise RuntimeError(f"{name}: expected 758 vertices, got {len(verts)}")
+                  length=max(v[2] for v in verts)-min(v[2] for v in verts)
+                  width=max(v[0] for v in verts)-min(v[0] for v in verts)
+                  extents[variant].append((length,width))
+                  w,h,pix=rgba(root/f"contrail_cloudlet_{name}.png")
+                  if (w,h)!=(512,512): raise RuntimeError(f"{name}: texture size")
+                  if {p[3] for p in pix}!={0,255}: raise RuntimeError(f"{name}: alpha must remain binary")
+                  if any(p[:3]!=(255,255,255) for p in pix): raise RuntimeError(f"{name}: RGB must remain pure ice white")
+                  occupancy[name]=sum(p[3]==255 for p in pix)/len(pix)
+                  if not 0.80<=occupancy[name]<=0.97: raise RuntimeError(f"{name}: occupancy {occupancy[name]}")
+          for variant in variants:
+              if not all(extents[variant][i][0]<extents[variant][i+1][0] and extents[variant][i][1]<extents[variant][i+1][1] for i in range(3)):
+                  raise RuntimeError(f"{variant}: non-monotonic growth {extents[variant]}")
+          for age in ages:
+              if not occupancy[f"{age}_soft"]<occupancy[f"{age}_dense"]: raise RuntimeError(f"{age}: occupancy ordering")
+          print("v6.7 extents",extents); print("v6.7 occupancy",occupancy)
+          '@ | python -
+
+      - name: Fetch X-Plane Plugin SDK 4.3.0
+        id: sdk
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path third_party | Out-Null
+          $archive = Join-Path $pwd "third_party/XPSDK430.zip"
+          $destination = Join-Path $pwd "third_party/xplane-sdk"
+          for ($attempt = 1; $attempt -le 5; $attempt++) {
+            try {
+              if (Test-Path $archive) { Remove-Item $archive -Force }
+              Invoke-WebRequest -Uri "https://developer.x-plane.com/wp-content/plugins/code-sample-generation/sdk_zip_files/XPSDK430.zip" -OutFile $archive -Headers @{ "User-Agent" = "FFAtmo-GitHub-Actions" }
+              if ((Get-Item $archive).Length -lt 1000000) { throw "SDK archive is unexpectedly small" }
+              break
+            } catch {
+              if ($attempt -eq 5) { throw }
+              Start-Sleep -Seconds (8 * $attempt)
+            }
+          }
+          Expand-Archive -LiteralPath $archive -DestinationPath $destination -Force
+          $header = Get-ChildItem $destination -Recurse -Filter "XPLMPlugin.h" | Where-Object { $_.FullName.Replace('\', '/') -like '*/CHeaders/XPLM/XPLMPlugin.h' } | Select-Object -First 1
+          if (-not $header) { throw "XPLMPlugin.h was not found" }
+          $root = Split-Path (Split-Path (Split-Path $header.FullName -Parent) -Parent) -Parent
+          "path=$root" >> $env:GITHUB_OUTPUT
+
+      - name: Compile plugin and deterministic tests
+        shell: pwsh
+        run: |
+          cmake -S . -B build-v67 -A x64 -DXPLANE_SDK="${{ steps.sdk.outputs.path }}" -DFFATMO_BUILD_PLUGIN=OFF -DFFATMO_BUILD_COMPANION=OFF -DFFATMO_BUILD_IMGUI_PANEL=OFF -DFFATMO_BUILD_GEOMETRY_DEBUG=OFF -DFFATMO_BUILD_RECORDER_DEBUG=OFF -DFFATMO_BUILD_CONTRAIL_DEBUG=ON -DFFATMO_BUILD_REPLAY_RUNNER=OFF -DFFATMO_BUILD_TESTS=ON -DFFATMO_GIT_REVISION="${{ github.sha }}"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & cmake --build build-v67 --config Release --target FFAtmoContrailDebug ffatmo_core_tests ffatmo_acf_tests ffatmo_replay_tests ffatmo_replay_runner_tests ffatmo_contrail_tests ffatmo_live_contrail_debug_tests ffatmo_contrail_render_planner_tests *> build-logs/build.txt
+          if ($LASTEXITCODE -ne 0) { Get-Content build-logs/build.txt; exit $LASTEXITCODE }
+          & ctest --test-dir build-v67 -C Release --output-on-failure *> build-logs/tests.txt
+          if ($LASTEXITCODE -ne 0) { Get-Content build-logs/tests.txt; exit $LASTEXITCODE }
+          if (-not (Test-Path package/FFAtmoContrailDebug/64/win.xpl)) { throw "v6.7 plugin was not produced" }
+
+      - name: Assemble v6.7 test package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path artifact/FFAtmoContrailDebug/64 | Out-Null
+          New-Item -ItemType Directory -Force -Path artifact/FFAtmoContrailDebug/assets | Out-Null
+          Copy-Item package/FFAtmoContrailDebug/64/win.xpl artifact/FFAtmoContrailDebug/64/win.xpl -Force
+          Copy-Item generated-v67-assets/* artifact/FFAtmoContrailDebug/assets/ -Force
+          @'
+          FFAtmo Renderer Foundation v6.7 - Physics Coupled Vortex Roll-Up
+
+          This is the first realism build where the visible roll-up phase comes from the same
+          finite-core Wake Fluid state that moves every physical contrail parcel.
+
+          Main changes from v6.6:
+          - carry real vortex phase/radius/core/circulation/descent through the render planner;
+          - keep primary ice cloudlets on the actual WakeFluidSolver parcel trajectory;
+          - render two smaller soft roll-up arms around that trajectory using the physical phase;
+          - add a sparse residual secondary wake toward the pre-vortex track;
+          - shorten native 3-D cloud bodies so cross-sectional vortex deformation remains visible;
+          - reduce arbitrary packing jitter; keep stable-hash ownership and 1024 native instances;
+          - retain the successful pure-white alpha-test material and live 8-14 m exhaust handoff.
+
+          Confirm "3D CLOUD V6.7 WAKE ROLLUP READY". Use Forced Dry Preview. Hold straight
+          flight for at least 40 seconds and inspect the 4-30 second wake from rear-quarter,
+          side, above and below before one gentle bank. The visual target is not a corkscrew:
+          two coherent fresh plumes should be captured into opposite-sense vortex roll-up,
+          with smaller curved cloud arms and a faint secondary wake as the primary wake sinks.
+          '@ | Set-Content artifact/FFAtmoContrailDebug/README_TESTING.txt -Encoding utf8
+          "renderer=engine-v1-levelup-b738-v6.7-physics-coupled-vortex-rollup" | Set-Content artifact/FFAtmoContrailDebug/BUILD_INFO.txt -Encoding utf8
+          "git_revision=${{ github.sha }}" | Add-Content artifact/FFAtmoContrailDebug/BUILD_INFO.txt -Encoding utf8
+
+      - name: Upload build diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: FFAtmo-v6.7-retry-build-diagnostics
+          path: build-logs
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Upload v6.7 package
+        uses: actions/upload-artifact@v4
+        with:
+          name: FFAtmoContrailDebug-v6.7-win64
+          path: artifact/FFAtmoContrailDebug
+          if-no-files-found: error
+          retention-days: 14

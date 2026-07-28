@@ -1,0 +1,143 @@
+name: Build Renderer Foundation v6.0 Volumetric Contrails
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - agent/levelup-particle-renderer-v5
+    paths:
+      - "src/ContrailVolumeRenderer.h"
+      - "tools/patch_v6_0_volumetric_renderer.py"
+      - "tools/fix_v6_0_windows_gl_loader.py"
+      - ".github/workflows/engine-v1-volume-renderer-v6-0.yml"
+  pull_request:
+    branches:
+      - engine/v1
+    paths:
+      - "src/ContrailVolumeRenderer.h"
+      - "tools/patch_v6_0_volumetric_renderer.py"
+      - "tools/fix_v6_0_windows_gl_loader.py"
+      - ".github/workflows/engine-v1-volume-renderer-v6-0.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ffatmo-volume-v60-${{ github.event.pull_request.number || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Check out renderer branch
+        uses: actions/checkout@v4
+        with:
+          ref: agent/levelup-particle-renderer-v5
+
+      - name: Apply stable wake baseline and v6.0 volume integration
+        shell: pwsh
+        run: |
+          python tools/fix_v5_5_regex_literals.py
+          python tools/patch_v5_4_1_runtime.py
+          python tools/patch_v5_5_parcel_clusters.py
+          python tools/patch_v5_5_1_visibility.py
+          python tools/patch_v5_5_2_cruise_visibility.py
+          python tools/patch_v5_6_connected_cloud_swirl.py
+          python tools/patch_v6_0_volumetric_renderer.py
+          python tools/fix_v6_0_windows_gl_loader.py
+
+          $plugin = Get-Content src/ContrailDebugPlugin.cpp -Raw
+          $volume = Get-Content src/ContrailVolumeRenderer.h -Raw
+          if ($plugin -notmatch 'ContrailVolumeRenderer') { throw "v6.0 volume renderer not integrated" }
+          if ($plugin -match 'ContrailParticleRenderer worldRenderer_') { throw "Particle renderer still owns world rendering" }
+          if ($plugin -notmatch 'VOLUME V6\.0 ARMED') { throw "v6.0 volume overlay status missing" }
+          if ($volume -notmatch 'xplm_Phase_Modern3D') { throw "Modern3D volume callback missing" }
+          if ($volume -notmatch 'densityAt\(') { throw "Procedural volume density function missing" }
+          if ($volume -notmatch 'for \(int i = 0; i < 34; \+\+i\)') { throw "Ray-march integration loop missing" }
+          if ($volume -notmatch 'XPLMSetGraphicsState\(0, 0, 0, 0, 1, 1, 0\)') { throw "Depth-tested blended state missing" }
+          if ($volume -match 'BILLBOARD_MODE|PARTICLE_SYSTEM|XPLMCreateInstance') { throw "Particle/impostor renderer leaked into v6.0" }
+          if ($volume -match 'glext\.h|PFNGL') { throw "External GL extension header dependency returned" }
+
+      - name: Fetch X-Plane Plugin SDK 4.3.0
+        id: sdk
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path third_party | Out-Null
+          $archive = Join-Path $pwd "third_party/XPSDK430.zip"
+          $destination = Join-Path $pwd "third_party/xplane-sdk"
+          for ($attempt = 1; $attempt -le 5; $attempt++) {
+            try {
+              if (Test-Path $archive) { Remove-Item $archive -Force }
+              Invoke-WebRequest -Uri "https://developer.x-plane.com/wp-content/plugins/code-sample-generation/sdk_zip_files/XPSDK430.zip" -OutFile $archive -Headers @{ "User-Agent" = "FFAtmo-GitHub-Actions" }
+              if ((Get-Item $archive).Length -lt 1000000) { throw "SDK archive is unexpectedly small" }
+              break
+            } catch {
+              if ($attempt -eq 5) { throw }
+              Start-Sleep -Seconds (8 * $attempt)
+            }
+          }
+          Expand-Archive -LiteralPath $archive -DestinationPath $destination -Force
+          $header = Get-ChildItem $destination -Recurse -Filter "XPLMPlugin.h" | Where-Object { $_.FullName.Replace('\', '/') -like '*/CHeaders/XPLM/XPLMPlugin.h' } | Select-Object -First 1
+          if (-not $header) { throw "XPLMPlugin.h was not found" }
+          $root = Split-Path (Split-Path (Split-Path $header.FullName -Parent) -Parent) -Parent
+          "path=$root" >> $env:GITHUB_OUTPUT
+
+      - name: Compile volumetric plugin and deterministic physics tests
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path build-logs | Out-Null
+          cmake -S . -B build-v60 -A x64 -DXPLANE_SDK="${{ steps.sdk.outputs.path }}" -DFFATMO_BUILD_PLUGIN=OFF -DFFATMO_BUILD_COMPANION=OFF -DFFATMO_BUILD_IMGUI_PANEL=OFF -DFFATMO_BUILD_GEOMETRY_DEBUG=OFF -DFFATMO_BUILD_RECORDER_DEBUG=OFF -DFFATMO_BUILD_CONTRAIL_DEBUG=ON -DFFATMO_BUILD_REPLAY_RUNNER=OFF -DFFATMO_BUILD_TESTS=ON -DFFATMO_GIT_REVISION="${{ github.sha }}"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & cmake --build build-v60 --config Release --target FFAtmoContrailDebug ffatmo_core_tests ffatmo_acf_tests ffatmo_replay_tests ffatmo_replay_runner_tests ffatmo_contrail_tests ffatmo_live_contrail_debug_tests ffatmo_contrail_render_planner_tests *> build-logs/build.txt
+          if ($LASTEXITCODE -ne 0) { Get-Content build-logs/build.txt; exit $LASTEXITCODE }
+          & ctest --test-dir build-v60 -C Release --output-on-failure *> build-logs/tests.txt
+          if ($LASTEXITCODE -ne 0) { Get-Content build-logs/tests.txt; exit $LASTEXITCODE }
+          if (-not (Test-Path package/FFAtmoContrailDebug/64/win.xpl)) { throw "v6.0 plugin was not produced" }
+
+      - name: Assemble v6.0 volumetric proof package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path artifact/FFAtmoContrailDebug/64 | Out-Null
+          Copy-Item package/FFAtmoContrailDebug/64/win.xpl artifact/FFAtmoContrailDebug/64/win.xpl -Force
+          @'
+          FFAtmo LevelUp B738 Renderer Foundation v6.0 - TRUE VOLUMETRIC PROOF
+
+          This build intentionally removes the billboard particle renderer.
+
+          Rendering path:
+          - xplm_Phase_Modern3D custom 3-D drawing callback.
+          - Camera-independent oriented volume cells generated from the wake solver.
+          - Procedural 3-D ice density ray-marched in the fragment shader.
+          - Beer-Lambert-style extinction and soft single-scattering approximation.
+          - Wake-age density growth and left/right counter-rotating internal structure.
+          - X-Plane depth testing enabled; depth writing disabled for translucent cloud volume.
+          - No BILLBOARD, AXIAL, RIBBON, OBJ cards, or camera-facing contrail geometry.
+
+          v6.0 is a rendering-foundation proof, not final quality. It deliberately caps the
+          visible field at 192 3-D volume cells while validating the Modern3D/Vulkan path.
+          Once this renders correctly, v6.1 will move the cells into GPU-batched tiled
+          density volumes for longer range and substantially higher detail.
+
+          Confirm VOLUME V6.0 ARMED in the overlay. Use Forced Dry Preview. Test from
+          behind, side-on, front, underneath, and while orbiting continuously around the wake.
+          '@ | Set-Content artifact/FFAtmoContrailDebug/README_TESTING.txt -Encoding utf8
+          "renderer=engine-v1-levelup-b738-v6.0-volumetric-raymarch-proof" | Set-Content artifact/FFAtmoContrailDebug/BUILD_INFO.txt -Encoding utf8
+          "git_revision=${{ github.sha }}" | Add-Content artifact/FFAtmoContrailDebug/BUILD_INFO.txt -Encoding utf8
+
+      - name: Upload build diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: FFAtmo-v6.0-build-diagnostics
+          path: build-logs
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Upload v6.0 volumetric proof
+        uses: actions/upload-artifact@v4
+        with:
+          name: FFAtmoContrailDebug-v6.0-volumetric-win64
+          path: artifact/FFAtmoContrailDebug
+          if-no-files-found: error
+          retention-days: 14

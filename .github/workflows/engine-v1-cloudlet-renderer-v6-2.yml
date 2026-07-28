@@ -1,0 +1,182 @@
+name: Build Renderer Foundation v6.2 Native 3D Filled Cloud Field
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - agent/levelup-particle-renderer-v5
+    paths:
+      - "src/ContrailCloudletRendererV62.h"
+      - "tools/generate_v6_2_filled_cloud_assets.py"
+      - "tools/patch_v6_2_filled_cloud_renderer.py"
+      - ".github/workflows/engine-v1-cloudlet-renderer-v6-2.yml"
+  pull_request:
+    branches:
+      - engine/v1
+    paths:
+      - "src/ContrailCloudletRendererV62.h"
+      - "tools/generate_v6_2_filled_cloud_assets.py"
+      - "tools/patch_v6_2_filled_cloud_renderer.py"
+      - ".github/workflows/engine-v1-cloudlet-renderer-v6-2.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ffatmo-cloudlets-v62-${{ github.event.pull_request.number || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Check out renderer branch
+        uses: actions/checkout@v4
+        with:
+          ref: agent/levelup-particle-renderer-v5
+
+      - name: Apply stable wake baseline and v6.2 renderer
+        shell: pwsh
+        run: |
+          python tools/fix_v5_5_regex_literals.py
+          python tools/patch_v5_4_1_runtime.py
+          python tools/patch_v5_5_parcel_clusters.py
+          python tools/patch_v5_5_1_visibility.py
+          python tools/patch_v5_5_2_cruise_visibility.py
+          python tools/patch_v5_6_connected_cloud_swirl.py
+          python tools/patch_v6_1_cloudlet_renderer.py
+          python tools/patch_v6_2_filled_cloud_renderer.py
+
+          $plugin = Get-Content src/ContrailDebugPlugin.cpp -Raw
+          $renderer = Get-Content src/ContrailCloudletRendererV62.h -Raw
+          if ($plugin -notmatch 'ContrailCloudletRendererV62') { throw "v6.2 cloud field renderer not integrated" }
+          if ($plugin -notmatch '3D CLOUD V6\.2 READY') { throw "v6.2 cloud overlay missing" }
+          if ($plugin -notmatch 'NATIVE_3D_FILLED_FIELD') { throw "v6.2 report identity missing" }
+          if ($renderer -notmatch 'kAssetCount = 4') { throw "four cloudlet size classes missing" }
+          if ($renderer -notmatch 'kInstancesPerAsset = 256') { throw "v6.2 persistent pool split missing" }
+          if ($renderer -notmatch 'fillId\(') { throw "stable midpoint fill identity missing" }
+          if ($renderer -notmatch 'swirlId\(') { throw "stable swirl companion identity missing" }
+          if ($renderer -notmatch 'XPLMCreateInstance') { throw "supported XPLMInstance path missing" }
+          if ($renderer -cmatch 'xplm_Phase_Modern3D|XPLMRegisterDrawCallback|PARTICLE_SYSTEM|BILLBOARD_MODE|ANIM_billboard') { throw "unsupported render path leaked into v6.2" }
+
+      - name: Generate and validate four 3-D cloudlet classes
+        shell: pwsh
+        run: |
+          python tools/generate_v6_2_filled_cloud_assets.py generated-v62-assets
+          @'
+          from pathlib import Path
+          import re, struct
+
+          root = Path("generated-v62-assets")
+          names = ["near", "young", "mature", "old"]
+          extents = []
+          for name in names:
+              obj_path = root / f"contrail_cloudlet_{name}.obj"
+              png_path = root / f"contrail_cloudlet_{name}.png"
+              if not obj_path.exists() or not png_path.exists():
+                  raise RuntimeError(f"Missing v6.2 {name} asset")
+              obj = obj_path.read_text()
+              forbidden = ("PARTICLE_SYSTEM", "EMITTER", "BILLBOARD", "ANIM_billboard")
+              if any(token in obj for token in forbidden):
+                  raise RuntimeError(f"{name}: forbidden particle/billboard primitive")
+              if "ATTR_blend" not in obj or "GLOBAL_no_shadow" not in obj or "TRIS 0 " not in obj:
+                  raise RuntimeError(f"{name}: native 3-D state missing")
+              vertices = []
+              for line in obj.splitlines():
+                  if line.startswith("VT "):
+                      fields = line.split()
+                      vertices.append(tuple(float(v) for v in fields[1:4]))
+              if len(vertices) < 350:
+                  raise RuntimeError(f"{name}: too few 3-D vertices: {len(vertices)}")
+              z_extent = max(v[2] for v in vertices) - min(v[2] for v in vertices)
+              x_extent = max(v[0] for v in vertices) - min(v[0] for v in vertices)
+              extents.append((z_extent, x_extent))
+              data = png_path.read_bytes()
+              width, height = struct.unpack(">II", data[16:24])
+              if (width, height) != (256, 256):
+                  raise RuntimeError(f"{name}: unexpected texture size {(width, height)}")
+          if not all(extents[i][0] < extents[i+1][0] for i in range(len(extents)-1)):
+              raise RuntimeError(f"Longitudinal age classes do not grow monotonically: {extents}")
+          if not all(extents[i][1] < extents[i+1][1] for i in range(len(extents)-1)):
+              raise RuntimeError(f"Cross-section age classes do not grow monotonically: {extents}")
+          print("Validated v6.2 cloud extents:", extents)
+          '@ | python -
+
+      - name: Fetch X-Plane Plugin SDK 4.3.0
+        id: sdk
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path third_party | Out-Null
+          $archive = Join-Path $pwd "third_party/XPSDK430.zip"
+          $destination = Join-Path $pwd "third_party/xplane-sdk"
+          for ($attempt = 1; $attempt -le 5; $attempt++) {
+            try {
+              if (Test-Path $archive) { Remove-Item $archive -Force }
+              Invoke-WebRequest -Uri "https://developer.x-plane.com/wp-content/plugins/code-sample-generation/sdk_zip_files/XPSDK430.zip" -OutFile $archive -Headers @{ "User-Agent" = "FFAtmo-GitHub-Actions" }
+              if ((Get-Item $archive).Length -lt 1000000) { throw "SDK archive is unexpectedly small" }
+              break
+            } catch {
+              if ($attempt -eq 5) { throw }
+              Start-Sleep -Seconds (8 * $attempt)
+            }
+          }
+          Expand-Archive -LiteralPath $archive -DestinationPath $destination -Force
+          $header = Get-ChildItem $destination -Recurse -Filter "XPLMPlugin.h" | Where-Object { $_.FullName.Replace('\', '/') -like '*/CHeaders/XPLM/XPLMPlugin.h' } | Select-Object -First 1
+          if (-not $header) { throw "XPLMPlugin.h was not found" }
+          $root = Split-Path (Split-Path (Split-Path $header.FullName -Parent) -Parent) -Parent
+          "path=$root" >> $env:GITHUB_OUTPUT
+
+      - name: Compile plugin and deterministic physics tests
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path build-logs | Out-Null
+          cmake -S . -B build-v62 -A x64 -DXPLANE_SDK="${{ steps.sdk.outputs.path }}" -DFFATMO_BUILD_PLUGIN=OFF -DFFATMO_BUILD_COMPANION=OFF -DFFATMO_BUILD_IMGUI_PANEL=OFF -DFFATMO_BUILD_GEOMETRY_DEBUG=OFF -DFFATMO_BUILD_RECORDER_DEBUG=OFF -DFFATMO_BUILD_CONTRAIL_DEBUG=ON -DFFATMO_BUILD_REPLAY_RUNNER=OFF -DFFATMO_BUILD_TESTS=ON -DFFATMO_GIT_REVISION="${{ github.sha }}"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & cmake --build build-v62 --config Release --target FFAtmoContrailDebug ffatmo_core_tests ffatmo_acf_tests ffatmo_replay_tests ffatmo_replay_runner_tests ffatmo_contrail_tests ffatmo_live_contrail_debug_tests ffatmo_contrail_render_planner_tests *> build-logs/build.txt
+          if ($LASTEXITCODE -ne 0) { Get-Content build-logs/build.txt; exit $LASTEXITCODE }
+          & ctest --test-dir build-v62 -C Release --output-on-failure *> build-logs/tests.txt
+          if ($LASTEXITCODE -ne 0) { Get-Content build-logs/tests.txt; exit $LASTEXITCODE }
+          if (-not (Test-Path package/FFAtmoContrailDebug/64/win.xpl)) { throw "v6.2 plugin was not produced" }
+
+      - name: Assemble v6.2 test package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path artifact/FFAtmoContrailDebug/64 | Out-Null
+          New-Item -ItemType Directory -Force -Path artifact/FFAtmoContrailDebug/assets | Out-Null
+          Copy-Item package/FFAtmoContrailDebug/64/win.xpl artifact/FFAtmoContrailDebug/64/win.xpl -Force
+          Copy-Item generated-v62-assets/* artifact/FFAtmoContrailDebug/assets/ -Force
+          @'
+          FFAtmo Renderer Foundation v6.2 - Native 3-D Filled Cloud Field
+
+          Builds directly on the successful v6.1 XPLMInstance cloudlet path.
+          Four physical 3-D mesh classes are used for near, young, mature and old wake.
+          Stable midpoint cloudlets close longitudinal gaps. A smaller deterministic
+          companion field exposes left/right counter-rotation inside the wake cross-section.
+          Old wake is reduced by deterministic LOD to protect the near/developing field.
+
+          No particle system, billboard, ribbon, camera-facing plane, Modern3D callback,
+          or custom OpenGL/Vulkan rendering is used.
+
+          Confirm "3D CLOUD V6.2 READY". Use Forced Dry Preview. Test from close rear,
+          side, above and underneath, then perform one gentle bank. Look for a connected
+          twin-stream cloud field that widens with age and begins to show subtle roll-up.
+          '@ | Set-Content artifact/FFAtmoContrailDebug/README_TESTING.txt -Encoding utf8
+          "renderer=engine-v1-levelup-b738-v6.2-native-3d-filled-cloud-field" | Set-Content artifact/FFAtmoContrailDebug/BUILD_INFO.txt -Encoding utf8
+          "git_revision=${{ github.sha }}" | Add-Content artifact/FFAtmoContrailDebug/BUILD_INFO.txt -Encoding utf8
+
+      - name: Upload build diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: FFAtmo-v6.2-build-diagnostics
+          path: build-logs
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Upload v6.2 package
+        uses: actions/upload-artifact@v4
+        with:
+          name: FFAtmoContrailDebug-v6.2-win64
+          path: artifact/FFAtmoContrailDebug
+          if-no-files-found: error
+          retention-days: 14

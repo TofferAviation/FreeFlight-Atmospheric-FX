@@ -1,0 +1,149 @@
+name: Retry Renderer Foundation v5.5 Parcel Clusters
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - agent/levelup-particle-renderer-v5
+    paths:
+      - ".github/workflows/engine-v1-particle-renderer-v5-5-retry.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ffatmo-renderer-v55-retry-${{ github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Check out particle renderer branch
+        uses: actions/checkout@v4
+        with:
+          ref: agent/levelup-particle-renderer-v5
+
+      - name: Fix patch replacement semantics and apply v5.5
+        shell: pwsh
+        run: |
+          $path = "tools/patch_v5_5_parcel_clusters.py"
+          $patcher = Get-Content $path -Raw
+          $patcher = $patcher.Replace(
+            '    update_replacement + "\n    void setEnabled",',
+            '    lambda _: update_replacement + "\n    void setEnabled",')
+          $patcher = $patcher.Replace(
+            '    set_billboard_replacement + "\n    void hideInstance",',
+            '    lambda _: set_billboard_replacement + "\n    void hideInstance",')
+          Set-Content $path $patcher -Encoding utf8 -NoNewline
+
+          python tools/patch_v5_4_1_runtime.py
+          python tools/patch_v5_5_parcel_clusters.py
+
+          $renderer = Get-Content src/ContrailParticleRenderer.h -Raw
+          $plugin = Get-Content src/ContrailDebugPlugin.cpp -Raw
+          if ($renderer -match 'XPLMLoadObjectAsync\(') { throw "Unsafe async loader returned" }
+          if ($renderer -notmatch 'deferredNonEmptyFrameCount_ < 3') { throw "Safe-start gate is missing" }
+          if ($renderer -notmatch 'struct CloudNode') { throw "Cloud clusters are missing" }
+          if ($renderer -notmatch 'sample\.sourceParcelId') { throw "Parcel anchoring is missing" }
+          if ($renderer -notmatch 'companions') { throw "Fluffy companion clouds are missing" }
+          if ($renderer -notmatch '2\.5f\);') { throw "Swirl clamp is missing" }
+          if ($plugin -notmatch 'visibleCapacity = 4096') { throw "Full planner input is missing" }
+          if ($plugin -notmatch 'WORLD V5\.5 READY') { throw "v5.5 label is missing" }
+
+      - name: Fetch X-Plane Plugin SDK 4.3.0
+        id: sdk
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path third_party | Out-Null
+          $archive = Join-Path $pwd "third_party/XPSDK430.zip"
+          $destination = Join-Path $pwd "third_party/xplane-sdk"
+          for ($attempt = 1; $attempt -le 5; $attempt++) {
+            try {
+              if (Test-Path $archive) { Remove-Item $archive -Force }
+              Invoke-WebRequest -Uri "https://developer.x-plane.com/wp-content/plugins/code-sample-generation/sdk_zip_files/XPSDK430.zip" -OutFile $archive -Headers @{ "User-Agent" = "FFAtmo-GitHub-Actions" }
+              if ((Get-Item $archive).Length -lt 1000000) { throw "SDK archive is unexpectedly small" }
+              break
+            } catch {
+              if ($attempt -eq 5) { throw }
+              Start-Sleep -Seconds (8 * $attempt)
+            }
+          }
+          Expand-Archive -LiteralPath $archive -DestinationPath $destination -Force
+          $header = Get-ChildItem $destination -Recurse -Filter "XPLMPlugin.h" | Where-Object { $_.FullName.Replace('\', '/') -like '*/CHeaders/XPLM/XPLMPlugin.h' } | Select-Object -First 1
+          if (-not $header) { throw "XPLMPlugin.h was not found" }
+          $root = Split-Path (Split-Path (Split-Path $header.FullName -Parent) -Parent) -Parent
+          "path=$root" >> $env:GITHUB_OUTPUT
+
+      - name: Configure, compile and test v5.5
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path build-logs | Out-Null
+          cmake -S . -B build-v55 -A x64 -DXPLANE_SDK="${{ steps.sdk.outputs.path }}" -DFFATMO_BUILD_PLUGIN=OFF -DFFATMO_BUILD_COMPANION=OFF -DFFATMO_BUILD_IMGUI_PANEL=OFF -DFFATMO_BUILD_GEOMETRY_DEBUG=OFF -DFFATMO_BUILD_RECORDER_DEBUG=OFF -DFFATMO_BUILD_CONTRAIL_DEBUG=ON -DFFATMO_BUILD_REPLAY_RUNNER=OFF -DFFATMO_BUILD_TESTS=ON -DFFATMO_GIT_REVISION="${{ github.sha }}"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & cmake --build build-v55 --config Release --target FFAtmoContrailDebug ffatmo_core_tests ffatmo_acf_tests ffatmo_replay_tests ffatmo_replay_runner_tests ffatmo_contrail_tests ffatmo_live_contrail_debug_tests ffatmo_contrail_render_planner_tests *> build-logs/build.txt
+          if ($LASTEXITCODE -ne 0) { Get-Content build-logs/build.txt; exit $LASTEXITCODE }
+          & ctest --test-dir build-v55 -C Release --output-on-failure *> build-logs/tests.txt
+          if ($LASTEXITCODE -ne 0) { Get-Content build-logs/tests.txt; exit $LASTEXITCODE }
+          if (-not (Test-Path "package/FFAtmoContrailDebug/64/win.xpl")) { throw "v5.5 win.xpl was not produced" }
+
+      - name: Generate and validate billboard assets
+        shell: pwsh
+        run: |
+          python tools/generate_particle_renderer_v5_4_1_assets.py generated-v55-assets
+          $obj = Get-Content generated-v55-assets/contrail_billboard.obj -Raw
+          $pss = Get-Content generated-v55-assets/contrail_v5_4_1_billboard.pss
+          if (($pss | Where-Object { $_.Trim() -eq 'BILLBOARD_MODE BILLBOARD' }).Count -ne 1) { throw "Billboard mode is missing" }
+          if (($pss | Where-Object { $_.Trim() -eq 'BILLBOARD_MODE RIBBON' }).Count -ne 0) { throw "Ribbon mode returned" }
+          if (($pss | Where-Object { $_.Trim() -eq 'EMIT_MODE ATTACH' }).Count -ne 1) { throw "Attach mode is missing" }
+          if ($obj -match 'TRIS|TEXTURE_LIT') { throw "Legacy card renderer returned" }
+
+      - name: Assemble v5.5 package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path artifact/FFAtmoContrailDebug/64 | Out-Null
+          New-Item -ItemType Directory -Force -Path artifact/FFAtmoContrailDebug/assets | Out-Null
+          Copy-Item package/FFAtmoContrailDebug/64/win.xpl artifact/FFAtmoContrailDebug/64/win.xpl -Force
+          Copy-Item generated-v55-assets/* artifact/FFAtmoContrailDebug/assets/ -Force
+          @'
+          FFAtmo LevelUp 737-800NG Renderer Foundation v5.5 Parcel-Cluster Swirl
+
+          INSTALL
+          1. Close X-Plane completely.
+          2. Delete the previous FFAtmoContrailDebug folder.
+          3. Copy this folder into X-Plane 12/Resources/plugins/.
+          4. Keep Effects Takeover v2.2 installed.
+
+          TEST
+          - Confirm WORLD V5.5 READY.
+          - Use Forced Dry Preview at cruise.
+          - Fly straight for 30 seconds.
+          - Make one smooth 10-15 degree bank.
+          - Export the visual-debug report.
+
+          TARGET
+          - stable physical-parcel cloud ownership
+          - connected fluffy grey-white twin streams
+          - small companion puffs between ages 5 and 20 seconds
+          - opposite controlled roll-up for left and right engines
+          - no thin handwriting, giant loops or cotton blobs
+          '@ | Set-Content artifact/FFAtmoContrailDebug/README_TESTING.txt -Encoding utf8
+          "renderer=engine-v1-levelup-b738-v5.5-parcel-cluster-swirl" | Set-Content artifact/FFAtmoContrailDebug/BUILD_INFO.txt -Encoding utf8
+          "git_revision=${{ github.sha }}" | Add-Content artifact/FFAtmoContrailDebug/BUILD_INFO.txt -Encoding utf8
+
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: FFAtmo-v5.5-retry-diagnostics
+          path: build-logs
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Upload v5.5 package
+        uses: actions/upload-artifact@v4
+        with:
+          name: FFAtmoContrailDebug-v5.5-win64
+          path: artifact/FFAtmoContrailDebug
+          if-no-files-found: error
+          retention-days: 14

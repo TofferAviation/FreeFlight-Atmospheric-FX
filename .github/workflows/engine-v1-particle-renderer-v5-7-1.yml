@@ -1,0 +1,159 @@
+name: Build Renderer Foundation v5.7.1 Projected Billboard Cloud
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - agent/levelup-particle-renderer-v5
+    paths:
+      - "tools/patch_v5_7_1_projected_billboard_cloud.py"
+      - "tools/generate_particle_renderer_v5_7_1_assets.py"
+      - ".github/workflows/engine-v1-particle-renderer-v5-7-1.yml"
+  pull_request:
+    branches:
+      - engine/v1
+    paths:
+      - "tools/patch_v5_7_1_projected_billboard_cloud.py"
+      - "tools/generate_particle_renderer_v5_7_1_assets.py"
+      - ".github/workflows/engine-v1-particle-renderer-v5-7-1.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ffatmo-renderer-v571-${{ github.event.pull_request.number || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Check out particle renderer branch
+        uses: actions/checkout@v4
+        with:
+          ref: agent/levelup-particle-renderer-v5
+
+      - name: Apply v5.7.1 projected billboard runtime
+        shell: pwsh
+        run: |
+          python tools/fix_v5_5_regex_literals.py
+          python tools/patch_v5_4_1_runtime.py
+          python tools/patch_v5_5_parcel_clusters.py
+          python tools/patch_v5_5_1_visibility.py
+          python tools/patch_v5_5_2_cruise_visibility.py
+          python tools/patch_v5_6_connected_cloud_swirl.py
+          python tools/patch_v5_7_1_projected_billboard_cloud.py
+
+          $renderer = Get-Content src/ContrailParticleRenderer.h -Raw
+          $plugin = Get-Content src/ContrailDebugPlugin.cpp -Raw
+          if ($renderer -match 'XPLMLoadObjectAsync\(') { throw "Unsafe async loader returned" }
+          if ($renderer -notmatch 'deferredNonEmptyFrameCount_ < 3') { throw "Safe-start gate missing" }
+          if ($renderer -notmatch 'kInstancesPerAsset = 1536') { throw "1536-instance stable pool missing" }
+          if ($renderer -notmatch 'XPLMReadCameraPosition') { throw "Camera projection input missing" }
+          if ($renderer -notmatch 'projectedRotation\(cloud\)') { throw "Projected wake rotation missing" }
+          if ($renderer -notmatch '4\.0f\) / 28\.0f') { throw "Projected segment size mapping missing" }
+          if ($renderer -notmatch 'appendTier\(fills\)') { throw "Longitudinal fill tier missing" }
+          if ($renderer -notmatch 'appendTier\(companions\)') { throw "Swirl companion tier missing" }
+          if ($renderer -match 'BILLBOARD_MODE (AXIAL|RIBBON)') { throw "Unsafe non-billboard mode returned" }
+          if ($plugin -notmatch 'WORLD V5\.7\.1 READY') { throw "v5.7.1 overlay label missing" }
+          if ($plugin -notmatch 'billboard field flushed and rebuilt') { throw "Rebase-frame flush missing" }
+
+      - name: Fetch X-Plane Plugin SDK 4.3.0
+        id: sdk
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path third_party | Out-Null
+          $archive = Join-Path $pwd "third_party/XPSDK430.zip"
+          $destination = Join-Path $pwd "third_party/xplane-sdk"
+          for ($attempt = 1; $attempt -le 5; $attempt++) {
+            try {
+              if (Test-Path $archive) { Remove-Item $archive -Force }
+              Invoke-WebRequest -Uri "https://developer.x-plane.com/wp-content/plugins/code-sample-generation/sdk_zip_files/XPSDK430.zip" -OutFile $archive -Headers @{ "User-Agent" = "FFAtmo-GitHub-Actions" }
+              if ((Get-Item $archive).Length -lt 1000000) { throw "SDK archive is unexpectedly small" }
+              break
+            } catch {
+              if ($attempt -eq 5) { throw }
+              Start-Sleep -Seconds (8 * $attempt)
+            }
+          }
+          Expand-Archive -LiteralPath $archive -DestinationPath $destination -Force
+          $header = Get-ChildItem $destination -Recurse -Filter "XPLMPlugin.h" | Where-Object { $_.FullName.Replace('\', '/') -like '*/CHeaders/XPLM/XPLMPlugin.h' } | Select-Object -First 1
+          if (-not $header) { throw "XPLMPlugin.h was not found" }
+          $root = Split-Path (Split-Path (Split-Path $header.FullName -Parent) -Parent) -Parent
+          "path=$root" >> $env:GITHUB_OUTPUT
+
+      - name: Compile and run deterministic tests
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path build-logs | Out-Null
+          cmake -S . -B build-v571 -A x64 -DXPLANE_SDK="${{ steps.sdk.outputs.path }}" -DFFATMO_BUILD_PLUGIN=OFF -DFFATMO_BUILD_COMPANION=OFF -DFFATMO_BUILD_IMGUI_PANEL=OFF -DFFATMO_BUILD_GEOMETRY_DEBUG=OFF -DFFATMO_BUILD_RECORDER_DEBUG=OFF -DFFATMO_BUILD_CONTRAIL_DEBUG=ON -DFFATMO_BUILD_REPLAY_RUNNER=OFF -DFFATMO_BUILD_TESTS=ON -DFFATMO_GIT_REVISION="${{ github.sha }}"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & cmake --build build-v571 --config Release --target FFAtmoContrailDebug ffatmo_core_tests ffatmo_acf_tests ffatmo_replay_tests ffatmo_replay_runner_tests ffatmo_contrail_tests ffatmo_live_contrail_debug_tests ffatmo_contrail_render_planner_tests *> build-logs/build.txt
+          if ($LASTEXITCODE -ne 0) { Get-Content build-logs/build.txt; exit $LASTEXITCODE }
+          & ctest --test-dir build-v571 -C Release --output-on-failure *> build-logs/tests.txt
+          if ($LASTEXITCODE -ne 0) { Get-Content build-logs/tests.txt; exit $LASTEXITCODE }
+          if (-not (Test-Path package/FFAtmoContrailDebug/64/win.xpl)) { throw "v5.7.1 plugin was not produced" }
+
+      - name: Generate and validate projected billboard asset
+        shell: pwsh
+        run: |
+          python tools/generate_particle_renderer_v5_7_1_assets.py generated-v571-assets
+          $obj = Get-Content generated-v571-assets/contrail_billboard.obj -Raw
+          $pss = Get-Content generated-v571-assets/contrail_v5_7_1_projected.pss -Raw
+          $lines = $pss -split "`r?`n" | ForEach-Object { $_.Trim() }
+          if (($lines | Where-Object { $_ -eq 'PARTICLE' }).Count -ne 1) { throw "Exactly one particle layer required" }
+          if (($lines | Where-Object { $_ -eq 'SUB_EMITTER' }).Count -ne 1) { throw "Exactly one attached sub-emitter required" }
+          if (($lines | Where-Object { $_ -eq 'BILLBOARD_MODE BILLBOARD' }).Count -ne 1) { throw "Standard billboard mode missing" }
+          if ($pss -match 'BILLBOARD_MODE (AXIAL|RIBBON)') { throw "Axial or Ribbon mode returned" }
+          if ($pss -notmatch '4\.000000 4\.000000') { throw "Minimum projected length missing" }
+          if ($pss -notmatch '32\.000000 32\.000000') { throw "Maximum projected length missing" }
+          if ($obj -match 'TRIS|TEXTURE_LIT') { throw "Legacy card material returned" }
+          @'
+          from pathlib import Path
+          import struct
+          data = Path("generated-v571-assets/contrail_v5_7_1_projected_cloud.png").read_bytes()
+          width, height = struct.unpack(">II", data[16:24])
+          if (width, height) != (1024, 1024):
+              raise RuntimeError(f"Expected 1024x1024 projected cloud texture, got {width}x{height}")
+          '@ | python -
+
+      - name: Assemble v5.7.1 test package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path artifact/FFAtmoContrailDebug/64 | Out-Null
+          New-Item -ItemType Directory -Force -Path artifact/FFAtmoContrailDebug/assets | Out-Null
+          Copy-Item package/FFAtmoContrailDebug/64/win.xpl artifact/FFAtmoContrailDebug/64/win.xpl -Force
+          Copy-Item generated-v571-assets/* artifact/FFAtmoContrailDebug/assets/ -Force
+          @'
+          FFAtmo LevelUp B738 Renderer Foundation v5.7.1 Projected Billboard Cloud
+
+          - Rejects the black AXIAL particle path seen in the v5.7 in-sim test.
+          - Uses one standard white billboard per persistent cloud node.
+          - Uses an elongated fluffy alpha texture instead of a circular puff.
+          - Reads the X-Plane camera once per frame and rotates each cloud to the projected wake tangent.
+          - Retains the stable 1536-instance pool, midpoint fills and controlled swirl companions.
+          - Retains the detached-wake guard and one-frame origin-rebase flush.
+          - Does not use AXIAL, Ribbon, OBJ cards or custom OpenGL rendering.
+
+          Confirm WORLD V5.7.1 READY. Use Forced Dry Preview and inspect straight
+          flight from front, rear, side and underneath before one gentle bank.
+          '@ | Set-Content artifact/FFAtmoContrailDebug/README_TESTING.txt -Encoding utf8
+          "renderer=engine-v1-levelup-b738-v5.7.1-projected-billboard-cloud" | Set-Content artifact/FFAtmoContrailDebug/BUILD_INFO.txt -Encoding utf8
+          "git_revision=${{ github.sha }}" | Add-Content artifact/FFAtmoContrailDebug/BUILD_INFO.txt -Encoding utf8
+
+      - name: Upload build diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: FFAtmo-v5.7.1-build-diagnostics
+          path: build-logs
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Upload v5.7.1 package
+        uses: actions/upload-artifact@v4
+        with:
+          name: FFAtmoContrailDebug-v5.7.1-win64
+          path: artifact/FFAtmoContrailDebug
+          if-no-files-found: error
+          retention-days: 14

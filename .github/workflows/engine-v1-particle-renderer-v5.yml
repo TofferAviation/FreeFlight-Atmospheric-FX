@@ -1,0 +1,235 @@
+name: Build Renderer Foundation v5 Particle Proof
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - agent/levelup-particle-renderer-v5
+    paths:
+      - "CMakeLists.txt"
+      - "src/**"
+      - "tools/generate_particle_renderer_v5_assets.py"
+      - "tests/**"
+      - ".github/workflows/engine-v1-particle-renderer-v5.yml"
+  pull_request:
+    branches:
+      - engine/v1
+    paths:
+      - "CMakeLists.txt"
+      - "src/**"
+      - "tools/generate_particle_renderer_v5_assets.py"
+      - "tests/**"
+      - ".github/workflows/engine-v1-particle-renderer-v5.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ffatmo-renderer-v5-particle-${{ github.event.pull_request.number || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+    env:
+      TARGET_BRANCH: ${{ github.head_ref || github.ref_name }}
+
+    steps:
+      - name: Check out particle renderer source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref || github.ref_name }}
+          fetch-depth: 0
+
+      - name: Switch debug plugin to Renderer v5 particles
+        shell: pwsh
+        run: |
+          $path = "src/ContrailDebugPlugin.cpp"
+          $text = Get-Content $path -Raw
+          if ($text -notmatch '#include "ContrailParticleRenderer.h"') {
+            if ($text -notmatch '#include "ContrailWorldRenderer.h"') {
+              throw "Contrail renderer include was not found"
+            }
+            $text = $text.Replace('#include "ContrailWorldRenderer.h"', '#include "ContrailParticleRenderer.h"')
+          }
+          $text = $text.Replace('ContrailWorldRenderer worldRenderer_;', 'ContrailParticleRenderer worldRenderer_;')
+          $text = $text.Replace('ContrailWorldRenderer::', 'ContrailParticleRenderer::')
+          $text = $text.Replace('renderPlannerSettings_.assetCapacities.fill(`r`n            ContrailParticleRenderer::kInstancesPerAsset);', 'renderPlannerSettings_.assetCapacities.fill(256);')
+          $text = $text.Replace('renderPlannerSettings_.assetCapacities.fill(`n            ContrailParticleRenderer::kInstancesPerAsset);', 'renderPlannerSettings_.assetCapacities.fill(256);')
+          $text = $text.Replace('v4.8', 'v5.0')
+          $text = $text.Replace('V4.8', 'V5.0')
+          $text = $text.Replace('v4 point 8', 'v5 point 0')
+          $text = $text.Replace(
+            'Renderer Foundation v5.0 uses atmosphere-conditioned cooling and nucleation with continuity-first trail planning.',
+            'Renderer Foundation v5.0 uses native X-Plane ribbon particles with LevelUp cooling and nucleation.')
+          $text = $text.Replace(
+            'Renderer Foundation v5.0 with B738 cooling, nucleation and wake-fluid trails',
+            'Renderer Foundation v5.0 native ribbon-particle proof with B738 cooling and wake physics')
+          Set-Content $path $text -Encoding utf8 -NoNewline
+
+          $updated = Get-Content $path -Raw
+          if ($updated -notmatch '#include "ContrailParticleRenderer.h"') { throw "Particle renderer include was not applied" }
+          if ($updated -notmatch 'ContrailParticleRenderer worldRenderer_') { throw "Particle renderer member was not applied" }
+          if ($updated -match 'ContrailWorldRenderer::') { throw "Legacy renderer class references remain" }
+          if ($updated -match 'v4\.8') { throw "Legacy v4.8 runtime labels remain" }
+
+      - name: Fetch X-Plane Plugin SDK 4.3.0
+        id: xplane_sdk
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path third_party | Out-Null
+          $archive = Join-Path $pwd "third_party/XPSDK430.zip"
+          $destination = Join-Path $pwd "third_party/xplane-sdk"
+          for ($attempt = 1; $attempt -le 5; $attempt++) {
+            try {
+              if (Test-Path $archive) { Remove-Item $archive -Force }
+              Invoke-WebRequest `
+                -Uri "https://developer.x-plane.com/wp-content/plugins/code-sample-generation/sdk_zip_files/XPSDK430.zip" `
+                -OutFile $archive `
+                -Headers @{ "User-Agent" = "FFAtmo-GitHub-Actions" }
+              if ((Get-Item $archive).Length -lt 1000000) { throw "SDK archive is unexpectedly small" }
+              break
+            } catch {
+              if ($attempt -eq 5) { throw }
+              Start-Sleep -Seconds (8 * $attempt)
+            }
+          }
+          Expand-Archive -LiteralPath $archive -DestinationPath $destination -Force
+          $header = Get-ChildItem $destination -Recurse -Filter "XPLMPlugin.h" |
+            Where-Object { $_.FullName.Replace('\', '/') -like '*/CHeaders/XPLM/XPLMPlugin.h' } |
+            Select-Object -First 1
+          if (-not $header) { throw "XPLMPlugin.h was not found" }
+          $sdkRoot = Split-Path (Split-Path (Split-Path $header.FullName -Parent) -Parent) -Parent
+          "path=$sdkRoot" >> $env:GITHUB_OUTPUT
+
+      - name: Configure particle renderer build
+        shell: pwsh
+        run: >-
+          cmake -S . -B build-particle-v5 -A x64
+          -DXPLANE_SDK="${{ steps.xplane_sdk.outputs.path }}"
+          -DFFATMO_BUILD_PLUGIN=OFF
+          -DFFATMO_BUILD_COMPANION=OFF
+          -DFFATMO_BUILD_IMGUI_PANEL=OFF
+          -DFFATMO_BUILD_GEOMETRY_DEBUG=OFF
+          -DFFATMO_BUILD_RECORDER_DEBUG=OFF
+          -DFFATMO_BUILD_CONTRAIL_DEBUG=ON
+          -DFFATMO_BUILD_REPLAY_RUNNER=OFF
+          -DFFATMO_BUILD_TESTS=ON
+          -DFFATMO_GIT_REVISION="${{ github.sha }}"
+
+      - name: Build plugin and deterministic engine tests
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path build-logs | Out-Null
+          & cmake --build build-particle-v5 --config Release --target FFAtmoContrailDebug ffatmo_core_tests ffatmo_acf_tests ffatmo_replay_tests ffatmo_replay_runner_tests ffatmo_contrail_tests ffatmo_live_contrail_debug_tests ffatmo_contrail_render_planner_tests *> build-logs/build.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & ctest --test-dir build-particle-v5 -C Release --output-on-failure *> build-logs/tests.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $plugin = "package/FFAtmoContrailDebug/64/win.xpl"
+          if (-not (Test-Path $plugin)) { throw "Renderer v5 particle win.xpl was not produced" }
+          if ((Get-Item $plugin).Length -lt 100000) { throw "Renderer v5 particle win.xpl is unexpectedly small" }
+
+      - name: Generate and validate native particle assets
+        shell: pwsh
+        run: |
+          python tools/generate_particle_renderer_v5_assets.py generated-particle-assets
+          $obj = Get-Content generated-particle-assets/contrail_ribbon.obj -Raw
+          $pss = Get-Content generated-particle-assets/contrail_v5.pss -Raw
+          $info = Get-Content generated-particle-assets/ASSET_INFO.txt -Raw
+          if ($obj -notmatch 'PARTICLE_SYSTEM contrail_v5\.pss') { throw "OBJ does not reference the v5 particle system" }
+          if ($obj -notmatch 'EMITTER ffatmo_ribbon') { throw "OBJ does not expose the ribbon emitter" }
+          if ($obj -match 'TRIS|TEXTURE_LIT') { throw "Particle proof unexpectedly contains card geometry/material" }
+          if ($pss -notmatch 'BILLBOARD_MODE RIBBON') { throw "Particle system is not ribbon mode" }
+          if ($pss -notmatch 'BLEND_MODE NORMAL') { throw "Particle system is not normal cloud blending" }
+          if ($pss -notmatch 'EMIT_MODE STREAM') { throw "Ribbon emitter is not streaming" }
+          if ($pss -notmatch 'DREF ffatmo/contrail_particle/rate') { throw "Rate instance channel is missing" }
+          if ($pss -notmatch 'DREF ffatmo/contrail_particle/size') { throw "Size instance channel is missing" }
+          if ($pss -notmatch 'DREF ffatmo/contrail_particle/alpha') { throw "Alpha instance channel is missing" }
+          if ($pss -notmatch 'DREF ffatmo/contrail_particle/lifetime') { throw "Lifetime instance channel is missing" }
+          if ($info -notmatch 'No OBJ card geometry') { throw "Asset metadata does not confirm removal of cards" }
+          $png = [System.IO.File]::ReadAllBytes("generated-particle-assets/contrail_particle.png")
+          if ($png.Length -lt 2000) { throw "Particle texture is unexpectedly small" }
+          if ($png[25] -ne 6) { throw "Particle texture must be RGBA PNG colour type 6" }
+
+      - name: Commit verified particle renderer integration
+        shell: pwsh
+        run: |
+          if (-not (git status --porcelain -- src/ContrailDebugPlugin.cpp)) {
+            Write-Host "No particle integration source change to commit"
+            exit 0
+          }
+          git config user.name "FreeFlight Engineering Bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add src/ContrailDebugPlugin.cpp
+          git commit -m "Switch LevelUp contrail debug to Renderer Foundation v5 particles"
+          git push origin "HEAD:$env:TARGET_BRANCH"
+
+      - name: Upload build diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: FFAtmoParticleRendererV5-build-diagnostics
+          path: build-logs
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Assemble LevelUp B738 Renderer v5 particle package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path artifact/FFAtmoContrailDebug/64 | Out-Null
+          New-Item -ItemType Directory -Force -Path artifact/FFAtmoContrailDebug/assets | Out-Null
+          Copy-Item package/FFAtmoContrailDebug/64/win.xpl artifact/FFAtmoContrailDebug/64/win.xpl -Force
+          Copy-Item generated-particle-assets/* artifact/FFAtmoContrailDebug/assets/ -Force
+          @'
+          FFAtmo LevelUp 737-800NG Renderer Foundation v5.0 Particle Proof
+
+          PURPOSE
+          Replace the rejected OBJ-card renderer with X-Plane's native particle system.
+          This build verifies continuous white ribbon contrails before the wake solver is
+          coupled to a second volumetric particle layer.
+
+          INSTALL
+          1. Close X-Plane completely.
+          2. Delete the previous FFAtmoContrailDebug folder.
+          3. Copy this FFAtmoContrailDebug folder into X-Plane 12/Resources/plugins/.
+          4. Keep Effects Takeover v2.2 installed on the LevelUp B738.
+
+          V5.0 ARCHITECTURE
+          - particle-only OBJ with no triangles or card material
+          - X-Plane native BILLBOARD_MODE RIBBON
+          - normal cloud alpha blending
+          - two plugin-managed emitter instances, one per CFM56
+          - emitter begins at the existing atmosphere-conditioned nucleation point
+          - LevelUp ACF geometry, cooling model and Wake Fluid Simulation v1 retained
+          - this proof intentionally validates ribbon appearance before far-wake coupling
+
+          TEST
+          1. Confirm the overlay says WORLD V5.0 READY.
+          2. Select Forced Dry Preview.
+          3. Fly straight for 15-20 seconds.
+          4. Inspect against sky and terrain from rear-quarter and side views.
+          5. Perform one gentle bank after a straight segment.
+
+          PASS TARGET
+          - continuous white/light-grey contrails with no visible card sections
+          - no black, brown, yellow or terrain-coloured geometry
+          - no glowing knots or repeating pinched card seams
+          - clear condensation gap behind the CFM56 exhaust region
+          - two distinct near-field streams
+          - plugin remains stable under Vulkan
+
+          EXPECTED LIMIT OF THIS PROOF
+          The native ribbons will not yet reproduce the full custom vortex displacement.
+          Once their appearance passes, v5.1 adds wake-parcel-driven billboard emitters
+          behind the short ribbon handoff.
+          '@ | Set-Content artifact/FFAtmoContrailDebug/README_TESTING.txt -Encoding utf8
+          "renderer=engine-v1-levelup-b738-v5.0-native-particle-ribbon-proof" | Set-Content artifact/FFAtmoContrailDebug/BUILD_INFO.txt -Encoding utf8
+          "git_revision=${{ github.sha }}" | Add-Content artifact/FFAtmoContrailDebug/BUILD_INFO.txt -Encoding utf8
+
+      - name: Upload particle renderer test plugin
+        uses: actions/upload-artifact@v4
+        with:
+          name: FFAtmoContrailDebug-win64
+          path: artifact/FFAtmoContrailDebug
+          if-no-files-found: error
+          retention-days: 14

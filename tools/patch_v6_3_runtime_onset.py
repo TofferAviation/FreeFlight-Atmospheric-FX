@@ -17,7 +17,15 @@ def once(text: str, old: str, new: str, label: str) -> str:
 
 
 def rx(text: str, pattern: str, replacement: str, label: str) -> str:
-    out, count = re.subn(pattern, replacement, text, count=1, flags=re.MULTILINE | re.DOTALL)
+    # A callable replacement prevents re.sub from interpreting backslashes in
+    # generated C++ text (for example the literal '\\n' report delimiters).
+    out, count = re.subn(
+        pattern,
+        lambda _match: replacement,
+        text,
+        count=1,
+        flags=re.MULTILINE | re.DOTALL,
+    )
     if count != 1:
         raise RuntimeError(f"{label}: expected one regex match, found {count}")
     return out
@@ -83,23 +91,18 @@ p = once(
     "diagnostic member",
 )
 
-report_pattern = (
-    r'''(\s*<< "current_condensation_full_seconds="\s*\n'''
-    r'''\s*<< latestCondensationFullSeconds_ << '\\n')\s*\n'''
-    r'''(\s*<< "geometry_status=" << geometryStatus_ << '\\n')'''
-)
-p = rx(
-    p,
-    report_pattern,
-    r'''\1
+report_old = r'''               << "current_condensation_full_seconds="
+               << latestCondensationFullSeconds_ << '\n'
+               << "geometry_status=" << geometryStatus_ << '\n' '''
+report_new = r'''               << "current_condensation_full_seconds="
+               << latestCondensationFullSeconds_ << '\n'
                << "visual_head_spatial_onset_target_m="
                << latestSpatialOnsetTargetM_ << '\n'
-\2''',
-    "spatial onset report field",
-)
+               << "geometry_status=" << geometryStatus_ << '\n' '''
+p = once(p, report_old, report_new, "spatial onset report field")
 
 asset_loop = "        for (std::size_t index = 0; index < render::kContrailRenderAssetCount; ++index) {"
-engine_diag = '''        for (std::size_t engineIndex = 0; engineIndex < engineExhaustBodyOffsets_.size(); ++engineIndex) {
+engine_diag = r'''        for (std::size_t engineIndex = 0; engineIndex < engineExhaustBodyOffsets_.size(); ++engineIndex) {
             const auto& offset = engineExhaustBodyOffsets_[engineIndex];
             stream << "engine_exhaust_body_offset_" << engineIndex << "_x_m=" << offset.x << '\n';
             stream << "engine_exhaust_body_offset_" << engineIndex << "_y_m=" << offset.y << '\n';

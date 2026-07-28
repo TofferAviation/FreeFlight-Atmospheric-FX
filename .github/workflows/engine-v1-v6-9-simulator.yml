@@ -201,3 +201,5 @@ jobs:
           path: artifact/FFAtmoContrailDebug
           if-no-files-found: error
           retention-days: 14
+
+# Follow-up trigger after the workflow file exists on the branch.

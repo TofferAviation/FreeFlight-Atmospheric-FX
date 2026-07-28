@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""Patch v6.0 into v6.0.1: force the Modern3D before callback and expose GPU dispatch diagnostics."""
+"""Patch v6.0 into v6.0.1: force Modern3D BEFORE dispatch and expose GPU diagnostics."""
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -11,101 +12,89 @@ PLUGIN = ROOT / "src" / "ContrailDebugPlugin.cpp"
 volume = VOLUME.read_text(encoding="utf-8")
 plugin = PLUGIN.read_text(encoding="utf-8")
 
-volume = volume.replace("v6.0", "v6.0.1").replace("V6.0", "V6.0.1")
-plugin = plugin.replace("v6.0", "v6.0.1").replace("V6.0", "V6.0.1")
-plugin = plugin.replace("v6 point 0", "v6 point 0 point 1")
+# Switch both registration and unregistration to the BEFORE callback.
+count = volume.count("xplm_Phase_Modern3D, 0, this")
+if count != 2:
+    raise RuntimeError(f"Expected two Modern3D AFTER registrations, found {count}")
+volume = volume.replace("xplm_Phase_Modern3D, 0, this", "xplm_Phase_Modern3D, 1, this")
 
-old_register = "XPLMRegisterDrawCallback(drawCallback, xplm_Phase_Modern3D, 0, this)"
-new_register = "XPLMRegisterDrawCallback(drawCallback, xplm_Phase_Modern3D, 1, this)"
-if old_register not in volume:
-    raise RuntimeError("v6.0 Modern3D registration was not found")
-volume = volume.replace(old_register, new_register, 1)
-
-old_unregister = "XPLMUnregisterDrawCallback(drawCallback, xplm_Phase_Modern3D, 0, this)"
-new_unregister = "XPLMUnregisterDrawCallback(drawCallback, xplm_Phase_Modern3D, 1, this)"
-if old_unregister not in volume:
-    raise RuntimeError("v6.0 Modern3D unregistration was not found")
-volume = volume.replace(old_unregister, new_unregister, 1)
-
-getter_marker = "    std::size_t loadedObjectCount() const { return gpuReady_ ? 1u : 0u; }\n"
-getters = getter_marker + (
-    "    bool gpuReady() const { return gpuReady_; }\n"
-    "    std::uint64_t drawCallbackInvocationCount() const { return drawCallbackInvocationCount_; }\n"
-    "    std::uint64_t regularDrawPassCount() const { return regularDrawPassCount_; }\n"
-    "    std::uint64_t gpuInitAttemptCount() const { return gpuInitAttemptCount_; }\n"
-    "    std::uint64_t gpuInitFailureCount() const { return gpuInitFailureCount_; }\n"
-    "    int lastWorldRenderType() const { return lastWorldRenderType_; }\n"
+# Public diagnostic accessors.
+marker = "    std::size_t loadedObjectCount() const { return gpuReady_ ? 1u : 0u; }\n"
+if volume.count(marker) != 1:
+    raise RuntimeError("Renderer getter insertion marker is not unique")
+volume = volume.replace(
+    marker,
+    marker
+    + "    bool gpuReady() const { return gpuReady_; }\n"
+    + "    std::uint64_t drawCallbackInvocationCount() const { return drawCallbackInvocationCount_; }\n"
+    + "    std::uint64_t regularDrawPassCount() const { return regularDrawPassCount_; }\n"
+    + "    std::uint64_t gpuInitAttemptCount() const { return gpuInitAttemptCount_; }\n"
+    + "    std::uint64_t gpuInitFailureCount() const { return gpuInitFailureCount_; }\n"
+    + "    int lastWorldRenderType() const { return lastWorldRenderType_; }\n",
+    1,
 )
-if getter_marker not in volume:
-    raise RuntimeError("v6.0 renderer getter marker was not found")
-volume = volume.replace(getter_marker, getters, 1)
 
-old_gpu = r'''    bool ensureGpuReady() {
-        if (gpuReady_) return true;
-        if (!loadGlFunctions()) {
-            log("Renderer v6.0.1 could not resolve required OpenGL shader entry points.\n");
-            return false;
-        }
-'''
-new_gpu = r'''    bool ensureGpuReady() {
-        if (gpuReady_) return true;
-        ++gpuInitAttemptCount_;
-        if (!loadGlFunctions()) {
-            ++gpuInitFailureCount_;
-            if (gpuInitFailureCount_ <= 3) {
-                log("Renderer v6.0.1 could not resolve required OpenGL shader entry points.\n");
-            }
-            return false;
-        }
-'''
-if old_gpu not in volume:
-    raise RuntimeError("v6.0 GPU initialisation block was not found")
-volume = volume.replace(old_gpu, new_gpu, 1)
+# Count every attempt to initialise the shader bridge. Do not depend on the
+# version string inside the log message.
+gpu_marker = "        if (gpuReady_) return true;\n        if (!loadGlFunctions()) {\n"
+if volume.count(gpu_marker) != 1:
+    raise RuntimeError("GPU init structural marker was not found uniquely")
+volume = volume.replace(
+    gpu_marker,
+    "        if (gpuReady_) return true;\n"
+    "        ++gpuInitAttemptCount_;\n"
+    "        if (!loadGlFunctions()) {\n"
+    "            ++gpuInitFailureCount_;\n",
+    1,
+)
 
-old_draw = r'''    int draw() {
-        if (!enabled_ || !running_ || cells_.empty()) return 1;
-        if (XPLMGetDatai(worldRenderTypeRef_) != 0) return 1;
-        if (!ensureGpuReady()) return 1;
-
-        XPLMCameraPosition_t camera {};
-'''
-new_draw = r'''    int draw() {
-        ++drawCallbackInvocationCount_;
-        lastWorldRenderType_ = worldRenderTypeRef_ ? XPLMGetDatai(worldRenderTypeRef_) : -999;
-        if (!firstDrawCallbackLogged_) {
-            firstDrawCallbackLogged_ = true;
-            log("Renderer v6.0.1 Modern3D BEFORE callback entered; render_type=" +
-                std::to_string(lastWorldRenderType_) + ".\n");
-        }
-        if (!enabled_ || !running_ || cells_.empty()) return 1;
-        if (lastWorldRenderType_ == 1 || lastWorldRenderType_ == 3 || lastWorldRenderType_ == 6) {
-            return 1;
-        }
-        ++regularDrawPassCount_;
-        if (!ensureGpuReady()) return 1;
-
-        XPLMCameraPosition_t camera {};
-'''
-if old_draw not in volume:
-    raise RuntimeError("v6.0 draw entry block was not found")
-volume = volume.replace(old_draw, new_draw, 1)
+# Instrument callback entry and remove the silent render_type != 0 gate.
+draw_marker = (
+    "    int draw() {\n"
+    "        if (!enabled_ || !running_ || cells_.empty()) return 1;\n"
+    "        if (XPLMGetDatai(worldRenderTypeRef_) != 0) return 1;\n"
+    "        if (!ensureGpuReady()) return 1;\n"
+)
+if volume.count(draw_marker) != 1:
+    raise RuntimeError("Renderer draw structural marker was not found uniquely")
+draw_replacement = (
+    "    int draw() {\n"
+    "        ++drawCallbackInvocationCount_;\n"
+    "        lastWorldRenderType_ = worldRenderTypeRef_ ? XPLMGetDatai(worldRenderTypeRef_) : -999;\n"
+    "        if (!firstDrawCallbackLogged_) {\n"
+    "            firstDrawCallbackLogged_ = true;\n"
+    "            log(\"Renderer v6.0.1 Modern3D BEFORE callback entered; render_type=\" +\n"
+    "                std::to_string(lastWorldRenderType_) + \".\\n\");\n"
+    "        }\n"
+    "        if (!enabled_ || !running_ || cells_.empty()) return 1;\n"
+    "        if (lastWorldRenderType_ == 1 || lastWorldRenderType_ == 3 || lastWorldRenderType_ == 6) return 1;\n"
+    "        ++regularDrawPassCount_;\n"
+    "        if (!ensureGpuReady()) return 1;\n"
+)
+volume = volume.replace(draw_marker, draw_replacement, 1)
 
 member_marker = "    bool drawCallbackRegistered_ = false;\n"
-members = member_marker + (
-    "    std::uint64_t drawCallbackInvocationCount_ = 0;\n"
-    "    std::uint64_t regularDrawPassCount_ = 0;\n"
-    "    std::uint64_t gpuInitAttemptCount_ = 0;\n"
-    "    std::uint64_t gpuInitFailureCount_ = 0;\n"
-    "    int lastWorldRenderType_ = -999;\n"
-    "    bool firstDrawCallbackLogged_ = false;\n"
+if volume.count(member_marker) != 1:
+    raise RuntimeError("Renderer member insertion marker is not unique")
+volume = volume.replace(
+    member_marker,
+    member_marker
+    + "    std::uint64_t drawCallbackInvocationCount_ = 0;\n"
+    + "    std::uint64_t regularDrawPassCount_ = 0;\n"
+    + "    std::uint64_t gpuInitAttemptCount_ = 0;\n"
+    + "    std::uint64_t gpuInitFailureCount_ = 0;\n"
+    + "    int lastWorldRenderType_ = -999;\n"
+    + "    bool firstDrawCallbackLogged_ = false;\n",
+    1,
 )
-if member_marker not in volume:
-    raise RuntimeError("v6.0 renderer member marker was not found")
-volume = volume.replace(member_marker, members, 1)
 
-old_status = '''        status.rendererStatus = worldRenderer_.ready() ?
-            "VOLUME V6.0.1 ARMED" : "VOLUME V6.0.1 OFFLINE";'''
-new_status = '''        if (!worldRenderer_.ready()) {
+# Replace the v6.0 overlay line structurally rather than relying on whitespace.
+status_pattern = re.compile(
+    r'\s*status\.rendererStatus = worldRenderer_\.ready\(\) \?\s*\n'
+    r'\s*"VOLUME V6\.0 ARMED" : "VOLUME V6\.0 OFFLINE";'
+)
+status_replacement = '''
+        if (!worldRenderer_.ready()) {
             status.rendererStatus = "VOLUME V6.0.1 OFFLINE";
         } else if (worldRenderer_.gpuReady()) {
             status.rendererStatus = "VOLUME V6.0.1 GPU READY";
@@ -114,31 +103,39 @@ new_status = '''        if (!worldRenderer_.ready()) {
         } else {
             status.rendererStatus = "VOLUME V6.0.1 WAITING DRAW";
         }'''
-if old_status not in plugin:
-    raise RuntimeError("v6.0 overlay status block was not found")
-plugin = plugin.replace(old_status, new_status, 1)
+plugin, replaced = status_pattern.subn(status_replacement, plugin, count=1)
+if replaced != 1:
+    raise RuntimeError("v6.0 overlay status assignment was not found")
 
-report_marker = '''               << "world_renderer_loaded_objects=" << worldRenderer_.loadedObjectCount() << '\n'
-'''
-report_extra = report_marker + '''               << "world_renderer_gpu_ready=" << (worldRenderer_.gpuReady() ? 1 : 0) << '\n'
-               << "world_renderer_draw_callback_count=" << worldRenderer_.drawCallbackInvocationCount() << '\n'
-               << "world_renderer_regular_pass_count=" << worldRenderer_.regularDrawPassCount() << '\n'
-               << "world_renderer_gpu_init_attempt_count=" << worldRenderer_.gpuInitAttemptCount() << '\n'
-               << "world_renderer_gpu_init_failure_count=" << worldRenderer_.gpuInitFailureCount() << '\n'
-               << "world_renderer_last_world_render_type=" << worldRenderer_.lastWorldRenderType() << '\n'
-'''
-if report_marker not in plugin:
-    raise RuntimeError("v6.0 report renderer marker was not found")
-plugin = plugin.replace(report_marker, report_extra, 1)
+# Add diagnostics immediately after the existing loaded-object report line.
+report_marker = "               << \"world_renderer_loaded_objects=\" << worldRenderer_.loadedObjectCount() << '\\n'\n"
+if plugin.count(report_marker) != 1:
+    raise RuntimeError("Report renderer insertion marker is not unique")
+plugin = plugin.replace(
+    report_marker,
+    report_marker
+    + "               << \"world_renderer_gpu_ready=\" << (worldRenderer_.gpuReady() ? 1 : 0) << '\\n'\n"
+    + "               << \"world_renderer_draw_callback_count=\" << worldRenderer_.drawCallbackInvocationCount() << '\\n'\n"
+    + "               << \"world_renderer_regular_pass_count=\" << worldRenderer_.regularDrawPassCount() << '\\n'\n"
+    + "               << \"world_renderer_gpu_init_attempt_count=\" << worldRenderer_.gpuInitAttemptCount() << '\\n'\n"
+    + "               << \"world_renderer_gpu_init_failure_count=\" << worldRenderer_.gpuInitFailureCount() << '\\n'\n"
+    + "               << \"world_renderer_last_world_render_type=\" << worldRenderer_.lastWorldRenderType() << '\\n'\n",
+    1,
+)
 
-if "xplm_Phase_Modern3D, 1, this" not in volume:
-    raise RuntimeError("Modern3D BEFORE callback was not enabled")
-if "drawCallbackInvocationCount_" not in volume:
-    raise RuntimeError("Modern3D callback diagnostics missing")
+# Version text last, after structural edits have found the v6.0 baseline.
+volume = volume.replace("v6.0", "v6.0.1").replace("V6.0", "V6.0.1")
+plugin = plugin.replace("v6.0", "v6.0.1").replace("V6.0", "V6.0.1")
+plugin = plugin.replace("v6 point 0", "v6 point 0 point 1")
+
+if volume.count("xplm_Phase_Modern3D, 1, this") != 2:
+    raise RuntimeError("Modern3D BEFORE registration/unregistration validation failed")
+if "drawCallbackInvocationCount_" not in volume or "regularDrawPassCount_" not in volume:
+    raise RuntimeError("Modern3D callback diagnostics are missing")
 if "VOLUME V6.0.1 WAITING DRAW" not in plugin:
-    raise RuntimeError("v6.0.1 overlay diagnostics missing")
+    raise RuntimeError("v6.0.1 overlay diagnostics are missing")
 if "world_renderer_draw_callback_count" not in plugin:
-    raise RuntimeError("v6.0.1 report diagnostics missing")
+    raise RuntimeError("v6.0.1 report diagnostics are missing")
 
 VOLUME.write_text(volume, encoding="utf-8", newline="\n")
 PLUGIN.write_text(plugin, encoding="utf-8", newline="\n")

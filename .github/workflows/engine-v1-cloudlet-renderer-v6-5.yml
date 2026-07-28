@@ -36,17 +36,25 @@ jobs:
       - name: Apply stable wake baseline through v6.5
         shell: pwsh
         run: |
-          python tools/fix_v5_5_regex_literals.py
-          python tools/patch_v5_4_1_runtime.py
-          python tools/patch_v5_5_parcel_clusters.py
-          python tools/patch_v5_5_1_visibility.py
-          python tools/patch_v5_5_2_cruise_visibility.py
-          python tools/patch_v5_6_connected_cloud_swirl.py
-          python tools/patch_v6_1_cloudlet_renderer.py
-          python tools/patch_v6_2_filled_cloud_renderer.py
-          python tools/patch_v6_3_morphology_onset_v2.py
-          python tools/patch_v6_4_head_endpoint_pool.py
-          python tools/patch_v6_5_handoff_vortex.py
+          New-Item -ItemType Directory -Force -Path build-logs | Out-Null
+          $scripts = @(
+            "tools/fix_v5_5_regex_literals.py",
+            "tools/patch_v5_4_1_runtime.py",
+            "tools/patch_v5_5_parcel_clusters.py",
+            "tools/patch_v5_5_1_visibility.py",
+            "tools/patch_v5_5_2_cruise_visibility.py",
+            "tools/patch_v5_6_connected_cloud_swirl.py",
+            "tools/patch_v6_1_cloudlet_renderer.py",
+            "tools/patch_v6_2_filled_cloud_renderer.py",
+            "tools/patch_v6_3_morphology_onset_v2.py",
+            "tools/patch_v6_4_head_endpoint_pool.py",
+            "tools/patch_v6_5_handoff_vortex.py"
+          )
+          foreach ($script in $scripts) {
+            "RUN $script" | Tee-Object -FilePath build-logs/patch.txt -Append
+            & python $script 2>&1 | Tee-Object -FilePath build-logs/patch.txt -Append
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
 
           $plugin = Get-Content src/ContrailDebugPlugin.cpp -Raw
           $renderer = Get-Content src/ContrailCloudletRendererV62.h -Raw
@@ -127,11 +135,11 @@ jobs:
                   w,h,rgba=png_rgba(png_path)
                   if (w,h)!=(256,256): raise RuntimeError(f"{name}: texture dimensions invalid")
                   alpha={p[3] for p in rgba}
-                  if not alpha.issubset({0,255}) or alpha != {0,255}:
+                  if alpha != {0,255}:
                       raise RuntimeError(f"{name}: texture must be binary alpha, got {sorted(alpha)[:8]}")
-                  if any((r,g,b)!=(255,255,255) for r,g,b,a in rgba):
+                  if any((rr,gg,bb)!=(255,255,255) for rr,gg,bb,aa in rgba):
                       raise RuntimeError(f"{name}: non-white RGB found")
-                  occupancy[name]=sum(1 for p in rgba if p[3]==255)/len(rgba)
+                  occupancy[name]=sum(1 for px in rgba if px[3]==255)/len(rgba)
                   if not (0.12 <= occupancy[name] <= 0.88):
                       raise RuntimeError(f"{name}: bad cutout occupancy {occupancy[name]}")
 
@@ -174,7 +182,6 @@ jobs:
       - name: Compile plugin and deterministic tests
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path build-logs | Out-Null
           cmake -S . -B build-v65 -A x64 -DXPLANE_SDK="${{ steps.sdk.outputs.path }}" -DFFATMO_BUILD_PLUGIN=OFF -DFFATMO_BUILD_COMPANION=OFF -DFFATMO_BUILD_IMGUI_PANEL=OFF -DFFATMO_BUILD_GEOMETRY_DEBUG=OFF -DFFATMO_BUILD_RECORDER_DEBUG=OFF -DFFATMO_BUILD_CONTRAIL_DEBUG=ON -DFFATMO_BUILD_REPLAY_RUNNER=OFF -DFFATMO_BUILD_TESTS=ON -DFFATMO_GIT_REVISION="${{ github.sha }}"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & cmake --build build-v65 --config Release --target FFAtmoContrailDebug ffatmo_core_tests ffatmo_acf_tests ffatmo_replay_tests ffatmo_replay_runner_tests ffatmo_contrail_tests ffatmo_live_contrail_debug_tests ffatmo_contrail_render_planner_tests *> build-logs/build.txt

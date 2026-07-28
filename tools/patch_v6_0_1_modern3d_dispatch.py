@@ -11,13 +11,10 @@ PLUGIN = ROOT / "src" / "ContrailDebugPlugin.cpp"
 volume = VOLUME.read_text(encoding="utf-8")
 plugin = PLUGIN.read_text(encoding="utf-8")
 
-# Version labels.
 volume = volume.replace("v6.0", "v6.0.1").replace("V6.0", "V6.0.1")
 plugin = plugin.replace("v6.0", "v6.0.1").replace("V6.0", "V6.0.1")
 plugin = plugin.replace("v6 point 0", "v6 point 0 point 1")
 
-# Modern3D on XP11/12 is conceptually the old before-airplanes insertion point.
-# Register the before callback explicitly rather than the after callback used by v6.0.
 old_register = "XPLMRegisterDrawCallback(drawCallback, xplm_Phase_Modern3D, 0, this)"
 new_register = "XPLMRegisterDrawCallback(drawCallback, xplm_Phase_Modern3D, 1, this)"
 if old_register not in volume:
@@ -30,7 +27,6 @@ if old_unregister not in volume:
     raise RuntimeError("v6.0 Modern3D unregistration was not found")
 volume = volume.replace(old_unregister, new_unregister, 1)
 
-# Public diagnostic getters.
 getter_marker = "    std::size_t loadedObjectCount() const { return gpuReady_ ? 1u : 0u; }\n"
 getters = getter_marker + (
     "    bool gpuReady() const { return gpuReady_; }\n"
@@ -44,15 +40,14 @@ if getter_marker not in volume:
     raise RuntimeError("v6.0 renderer getter marker was not found")
 volume = volume.replace(getter_marker, getters, 1)
 
-# Count shader initialisation attempts and make failed attempts explicit.
-old_gpu = """    bool ensureGpuReady() {
+old_gpu = r'''    bool ensureGpuReady() {
         if (gpuReady_) return true;
         if (!loadGlFunctions()) {
             log("Renderer v6.0.1 could not resolve required OpenGL shader entry points.\n");
             return false;
         }
-"""
-new_gpu = """    bool ensureGpuReady() {
+'''
+new_gpu = r'''    bool ensureGpuReady() {
         if (gpuReady_) return true;
         ++gpuInitAttemptCount_;
         if (!loadGlFunctions()) {
@@ -62,22 +57,19 @@ new_gpu = """    bool ensureGpuReady() {
             }
             return false;
         }
-"""
+'''
 if old_gpu not in volume:
     raise RuntimeError("v6.0 GPU initialisation block was not found")
 volume = volume.replace(old_gpu, new_gpu, 1)
 
-# Replace silent draw-return path with observable Modern3D dispatch. Only the
-# documented reflection/shadow/cubemap passes are skipped. Unknown values are
-# allowed through once and logged so XP12 changes cannot silently disable us.
-old_draw = """    int draw() {
+old_draw = r'''    int draw() {
         if (!enabled_ || !running_ || cells_.empty()) return 1;
         if (XPLMGetDatai(worldRenderTypeRef_) != 0) return 1;
         if (!ensureGpuReady()) return 1;
 
         XPLMCameraPosition_t camera {};
-"""
-new_draw = """    int draw() {
+'''
+new_draw = r'''    int draw() {
         ++drawCallbackInvocationCount_;
         lastWorldRenderType_ = worldRenderTypeRef_ ? XPLMGetDatai(worldRenderTypeRef_) : -999;
         if (!firstDrawCallbackLogged_) {
@@ -93,12 +85,11 @@ new_draw = """    int draw() {
         if (!ensureGpuReady()) return 1;
 
         XPLMCameraPosition_t camera {};
-"""
+'''
 if old_draw not in volume:
     raise RuntimeError("v6.0 draw entry block was not found")
 volume = volume.replace(old_draw, new_draw, 1)
 
-# Reset diagnostics only on renderer stop/start, not each simulation frame.
 member_marker = "    bool drawCallbackRegistered_ = false;\n"
 members = member_marker + (
     "    std::uint64_t drawCallbackInvocationCount_ = 0;\n"
@@ -112,7 +103,6 @@ if member_marker not in volume:
     raise RuntimeError("v6.0 renderer member marker was not found")
 volume = volume.replace(member_marker, members, 1)
 
-# Make overlay distinguish callback dispatch from actual GPU readiness.
 old_status = '''        status.rendererStatus = worldRenderer_.ready() ?
             "VOLUME V6.0.1 ARMED" : "VOLUME V6.0.1 OFFLINE";'''
 new_status = '''        if (!worldRenderer_.ready()) {
@@ -128,21 +118,19 @@ if old_status not in plugin:
     raise RuntimeError("v6.0 overlay status block was not found")
 plugin = plugin.replace(old_status, new_status, 1)
 
-# Export the new callback/GPU diagnostics in the existing report.
-report_marker = '''               << "world_renderer_loaded_objects=" << worldRenderer_.loadedObjectCount() << '\\n'
+report_marker = '''               << "world_renderer_loaded_objects=" << worldRenderer_.loadedObjectCount() << '\n'
 '''
-report_extra = report_marker + '''               << "world_renderer_gpu_ready=" << (worldRenderer_.gpuReady() ? 1 : 0) << '\\n'
-               << "world_renderer_draw_callback_count=" << worldRenderer_.drawCallbackInvocationCount() << '\\n'
-               << "world_renderer_regular_pass_count=" << worldRenderer_.regularDrawPassCount() << '\\n'
-               << "world_renderer_gpu_init_attempt_count=" << worldRenderer_.gpuInitAttemptCount() << '\\n'
-               << "world_renderer_gpu_init_failure_count=" << worldRenderer_.gpuInitFailureCount() << '\\n'
-               << "world_renderer_last_world_render_type=" << worldRenderer_.lastWorldRenderType() << '\\n'
+report_extra = report_marker + '''               << "world_renderer_gpu_ready=" << (worldRenderer_.gpuReady() ? 1 : 0) << '\n'
+               << "world_renderer_draw_callback_count=" << worldRenderer_.drawCallbackInvocationCount() << '\n'
+               << "world_renderer_regular_pass_count=" << worldRenderer_.regularDrawPassCount() << '\n'
+               << "world_renderer_gpu_init_attempt_count=" << worldRenderer_.gpuInitAttemptCount() << '\n'
+               << "world_renderer_gpu_init_failure_count=" << worldRenderer_.gpuInitFailureCount() << '\n'
+               << "world_renderer_last_world_render_type=" << worldRenderer_.lastWorldRenderType() << '\n'
 '''
 if report_marker not in plugin:
     raise RuntimeError("v6.0 report renderer marker was not found")
 plugin = plugin.replace(report_marker, report_extra, 1)
 
-# Validation.
 if "xplm_Phase_Modern3D, 1, this" not in volume:
     raise RuntimeError("Modern3D BEFORE callback was not enabled")
 if "drawCallbackInvocationCount_" not in volume:

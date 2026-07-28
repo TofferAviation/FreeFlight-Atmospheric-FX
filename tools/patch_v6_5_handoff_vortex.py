@@ -24,21 +24,12 @@ def rx(text: str, pattern: str, replacement: str, label: str) -> str:
     return out
 
 
-# ---------------------------------------------------------------------------
-# Runtime handoff: v6.3/v6.4 moved a synthetic head using current aircraft
-# velocity. In live motion that extrapolated vector can disagree with the
-# historical world-space wake and create the short kink visible in the test.
-# Track the youngest actually renderable physical parcel per engine and place
-# the synthetic head directly on exhaust -> wake bridge instead.
-# ---------------------------------------------------------------------------
+# Runtime handoff: lock the synthetic start directly onto the live line from
+# each exhaust to that engine's youngest actually-renderable physical parcel.
 p = PLUGIN.read_text(encoding="utf-8")
 
-p = once(
-    p,
-    "constexpr float kHeatBlurHandoffSeconds = 0.08f;",
-    "constexpr float kHeatBlurHandoffSeconds = 0.04f;",
-    "short live visual handoff",
-)
+p = once(p, "constexpr float kHeatBlurHandoffSeconds = 0.08f;",
+         "constexpr float kHeatBlurHandoffSeconds = 0.04f;", "short live visual handoff")
 
 p = once(
     p,
@@ -81,13 +72,9 @@ p = rx(
             const double vy = static_cast<double>(snapshot.linearVelocityLocalMps.y);
             const double vz = static_cast<double>(snapshot.linearVelocityLocalMps.z);
             const double localSpeedMps = std::sqrt(vx * vx + vy * vy + vz * vz);
-            const double effectiveSpeedMps = std::max(
-                localSpeedMps,
-                static_cast<double>(snapshot.trueAirspeedMps));
+            const double effectiveSpeedMps = std::max(localSpeedMps, static_cast<double>(snapshot.trueAirspeedMps));
             const double requestedOnsetM = std::clamp(
-                effectiveSpeedMps * static_cast<double>(kHeatBlurHandoffSeconds),
-                8.0,
-                14.0);
+                effectiveSpeedMps * static_cast<double>(kHeatBlurHandoffSeconds), 8.0, 14.0);
 
             engine::Vec3d bridge {};
             double bridgeLengthM = 0.0;
@@ -97,22 +84,18 @@ p = rx(
                     youngestRenderableLocal[engineIndex].y - exhausts[engineIndex].y,
                     youngestRenderableLocal[engineIndex].z - exhausts[engineIndex].z
                 };
-                bridgeLengthM = std::sqrt(
-                    bridge.x * bridge.x + bridge.y * bridge.y + bridge.z * bridge.z);
+                bridgeLengthM = std::sqrt(bridge.x * bridge.x + bridge.y * bridge.y + bridge.z * bridge.z);
             }
             if (!(bridgeLengthM > 1.0) || !std::isfinite(bridgeLengthM)) {
                 bridge = {-vx, -vy, -vz};
-                bridgeLengthM = std::sqrt(
-                    bridge.x * bridge.x + bridge.y * bridge.y + bridge.z * bridge.z);
+                bridgeLengthM = std::sqrt(bridge.x * bridge.x + bridge.y * bridge.y + bridge.z * bridge.z);
             }
             if (!(bridgeLengthM > 1.0) || !std::isfinite(bridgeLengthM)) {
                 bridge = {0.0, 0.0, -1.0};
                 bridgeLengthM = 1.0;
             }
             const double invBridge = 1.0 / bridgeLengthM;
-            bridge.x *= invBridge;
-            bridge.y *= invBridge;
-            bridge.z *= invBridge;
+            bridge.x *= invBridge; bridge.y *= invBridge; bridge.z *= invBridge;
 
             const double spatialOnsetM = youngestRenderableValid[engineIndex]
                 ? std::min(requestedOnsetM, std::max(3.0, bridgeLengthM * 0.45))
@@ -149,7 +132,6 @@ p = once(
         latestCondensationStartSeconds_ = 0.0f;''',
     "handoff diagnostic reset",
 )
-
 p = once(
     p,
     "    double latestSpatialOnsetTargetM_ = 0.0;\n    float latestCondensationStartSeconds_ = 0.0f;",
@@ -160,28 +142,23 @@ p = once(
     "handoff diagnostic members",
 )
 
+# Match the single value output rather than the whole multi-line report block;
+# earlier patch stages may change surrounding indentation/continuation text.
 p = once(
     p,
-    '''               << "visual_head_spatial_onset_target_m="
-               << latestSpatialOnsetTargetM_ << '\n'
-''',
-    '''               << "visual_head_spatial_onset_target_m="
-               << latestSpatialOnsetTargetM_ << '\n'
-               << "render_material_mode=ALPHA_TEST_CUTOUT" << '\n'
-''',
+    "               << latestSpatialOnsetTargetM_ << '\\n'",
+    "               << latestSpatialOnsetTargetM_ << '\\n'\n               << \"render_material_mode=ALPHA_TEST_CUTOUT\" << '\\n'",
     "material mode report",
 )
 
 p = once(
     p,
-    '''            stream << "engine_exhaust_body_offset_" << engineIndex << "_z_m=" << offset.z << '\n';
-''',
+    '''            stream << "engine_exhaust_body_offset_" << engineIndex << "_z_m=" << offset.z << '\n';''',
     '''            stream << "engine_exhaust_body_offset_" << engineIndex << "_z_m=" << offset.z << '\n';
             stream << "synthetic_head_actual_distance_" << engineIndex << "_m="
                    << latestSyntheticHeadActualDistanceM_[engineIndex] << '\n';
             stream << "synthetic_head_bridge_length_" << engineIndex << "_m="
-                   << latestSyntheticHeadBridgeLengthM_[engineIndex] << '\n';
-''',
+                   << latestSyntheticHeadBridgeLengthM_[engineIndex] << '\n';''',
     "per-engine handoff report",
 )
 
@@ -190,37 +167,24 @@ p = p.replace("FFAtmo World Contrail Visual Debug Report v6.4 NATIVE_3D_CONTINUO
 p = p.replace("3D CLOUD V6.4 READY", "3D CLOUD V6.5 VORTEX READY")
 p = p.replace("LOADING V6.4 CONTINUOUS SHELL FIELD", "LOADING V6.5 ICE VORTEX FIELD")
 p = p.replace("v6 point 4", "v6 point 5")
-p = p.replace("v6.4", "v6.5")
-p = p.replace("V6.4", "V6.5")
+p = p.replace("v6.4", "v6.5").replace("V6.4", "V6.5")
 p = p.replace(
     "renders porous continuous-shell 3-D cloudlets with an explicit nozzle-relative head endpoint.",
     "renders alpha-tested ice-white 3-D cloudlets with a streamline-locked live handoff and controlled vortex roll-up.",
 )
-
 for token in (
-    "kHeatBlurHandoffSeconds = 0.04f",
-    "youngestRenderableLocal",
-    "requestedOnsetM",
-    "latestSyntheticHeadActualDistanceM_",
-    "render_material_mode=ALPHA_TEST_CUTOUT",
-    "ICE_WHITE_VORTEX_FIELD",
-    "3D CLOUD V6.5 VORTEX READY",
+    "kHeatBlurHandoffSeconds = 0.04f", "youngestRenderableLocal", "requestedOnsetM",
+    "latestSyntheticHeadActualDistanceM_", "render_material_mode=ALPHA_TEST_CUTOUT",
+    "ICE_WHITE_VORTEX_FIELD", "3D CLOUD V6.5 VORTEX READY",
 ):
     if token not in p:
         raise RuntimeError(f"v6.5 runtime handoff integration missing: {token}")
-
 PLUGIN.write_text(p, encoding="utf-8", newline="\n")
 
 
-# ---------------------------------------------------------------------------
-# Renderer: start the real wake-morphology stage. Keep primaries on the fluid
-# centreline, but give the companion cloud mass a bounded counter-rotating
-# cross-section. Rotation grows after ~3 s, is strongest through the developing
-# wake, then loses organization after ~22 s rather than becoming an endless
-# corkscrew.
-# ---------------------------------------------------------------------------
+# Renderer: bounded cross-sectional wake roll-up. Primaries remain on the
+# physical centreline; companions counter-rotate and then diffuse.
 r = RENDERER.read_text(encoding="utf-8")
-
 r = once(
     r,
     "        swirlCloudletCount_ = 0;\n        deferredNonEmptyFrameCount_ = 0;",
@@ -241,7 +205,6 @@ r = once(
         for (auto& row : usedThisFrame_) row.fill(false);''',
     "per-frame swirl diagnostics reset",
 )
-
 r = once(
     r,
     "    std::size_t swirlCloudletCount() const { return swirlCloudletCount_; }\n    double maximumWakeTurnDeg() const { return maximumWakeTurnDeg_; }",
@@ -274,8 +237,7 @@ r = rx(
                 swirl.tangent = sample.trailTangentLocal;
                 normalize(swirl.tangent);
                 swirl.opacityStrength = sample.opacityStrength * 0.52f;
-                swirl.assetIndex = assetForCloud(
-                    swirl.ageSeconds, swirl.opacityStrength, swirl.cloudId);
+                swirl.assetIndex = assetForCloud(swirl.ageSeconds, swirl.opacityStrength, swirl.cloudId);
 
                 engine::Vec3d side {-swirl.tangent.z, 0.0, swirl.tangent.x};
                 const double sideM = std::sqrt(side.x * side.x + side.z * side.z);
@@ -290,18 +252,15 @@ r = rx(
 
                 const float develop = smoothstep(3.0f, 12.0f, sample.ageSeconds);
                 const float diffuse = 1.0f - 0.62f * smoothstep(22.0f, 30.0f, sample.ageSeconds);
-                const double widthBound = std::clamp(
-                    static_cast<double>(sample.widthM) * 0.46, 0.32, 2.65);
+                const double widthBound = std::clamp(static_cast<double>(sample.widthM) * 0.46, 0.32, 2.65);
                 const double stableVariation = 0.84 +
                     0.24 * static_cast<double>(unitHash(sample.renderId ^ 0x6d31ULL));
-                const double radius = widthBound *
-                    (0.12 + 0.88 * static_cast<double>(develop)) *
+                const double radius = widthBound * (0.12 + 0.88 * static_cast<double>(develop)) *
                     static_cast<double>(diffuse) * stableVariation;
                 const double direction = engineIndex == 0 ? -1.0 : 1.0;
                 const double phaseSeed =
                     (static_cast<double>(unitHash(sample.renderId ^ 0xa55aULL)) - 0.5) * 0.34;
-                const double phase = direction *
-                    static_cast<double>(sample.ageSeconds - 3.0f) * 0.31 + phaseSeed;
+                const double phase = direction * static_cast<double>(sample.ageSeconds - 3.0f) * 0.31 + phaseSeed;
                 const double lateralRadius = radius;
                 const double verticalRadius = radius * 0.72;
                 swirl.position = {
@@ -319,7 +278,6 @@ r = rx(
             }''',
     "organized vortex roll-up",
 )
-
 r = once(
     r,
     "    std::size_t swirlCloudletCount_ = 0;\n    double maximumWakeTurnDeg_ = 0.0;",
@@ -330,21 +288,15 @@ r = once(
     double maximumWakeTurnDeg_ = 0.0;''',
     "swirl diagnostic members",
 )
-
 r = r.replace("Renderer Foundation v6.4", "Renderer Foundation v6.5")
 r = r.replace("Renderer v6.4", "Renderer v6.5")
 r = r.replace("continuous-shell native 3-D morphology field", "ice-white cutout vortex 3-D field")
 r = r.replace("porous single-surface 3-D OBJ morphology assets", "alpha-tested ice-white 3-D morphology assets")
-
 for token in (
-    "sample.ageSeconds >= 3.0f",
-    "widthBound",
-    "maximumSwirlRadiusM_",
-    "meanSwirlRadiusM()",
-    "sample.opacityStrength * 0.52f",
+    "sample.ageSeconds >= 3.0f", "widthBound", "maximumSwirlRadiusM_",
+    "meanSwirlRadiusM()", "sample.opacityStrength * 0.52f",
 ):
     if token not in r:
         raise RuntimeError(f"v6.5 vortex integration missing: {token}")
-
 RENDERER.write_text(r, encoding="utf-8", newline="\n")
 print("Integrated Renderer Foundation v6.5 streamline handoff + vortex roll-up")

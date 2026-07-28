@@ -37,7 +37,7 @@ jobs:
       - name: Check out v6.9 branch
         uses: actions/checkout@v4
 
-      - name: Apply accepted renderer baseline through v6.8
+      - name: Apply accepted renderer baseline through final v6.8 retry
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path build-logs | Out-Null
@@ -57,6 +57,7 @@ jobs:
             "tools/patch_v6_6_smooth_stable_field.py",
             "tools/fix_v6_7_report_matcher.py",
             "tools/patch_v6_7_physics_coupled_rollup.py",
+            "tools/fix_v6_8_diagnostic_reset.py",
             "tools/patch_v6_8_visible_primary_rollup.py"
           )
           foreach ($script in $scripts) {
@@ -201,5 +202,3 @@ jobs:
           path: artifact/FFAtmoContrailDebug
           if-no-files-found: error
           retention-days: 14
-
-# Follow-up trigger after the workflow file exists on the branch.

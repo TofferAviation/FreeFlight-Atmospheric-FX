@@ -2,6 +2,7 @@
 
 #include "diagnostics/ReplayRunner.h"
 #include "engine/WakeFluidSolver.h"
+#include "engine/WakeVortexSheet.h"
 
 #include <cstdint>
 #include <filesystem>
@@ -41,8 +42,14 @@ struct ContrailParcel {
     float sourceTemperatureK = 0.0f;
     float sourceRelativeHumidityIcePercent = 0.0f;
 
-    // Live-renderer wake state. Offline baseline construction leaves this at
-    // neutral defaults, so accepted replay fixtures remain unchanged.
+    // v6.9 representation: a physical parcel now carries a persistent wake
+    // cross-section with independently advected Lagrangian material lanes.
+    // The legacy centreline state remains temporarily during migration so v6.8
+    // can be compared directly and existing diagnostics continue to compile.
+    WakeVortexSheetState vortexSheet {};
+
+    // Live-renderer wake state retained only as the v6.8 compatibility path.
+    // v6.9 rendering must consume vortexSheet marker positions instead.
     WakeFluidState wakeFluid {};
 
     // Compatibility diagnostics retained for the renderer and earlier tests.

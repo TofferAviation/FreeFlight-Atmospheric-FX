@@ -8,13 +8,17 @@ on:
     paths:
       - "src/engine/WakeVortexSheet.h"
       - "src/engine/ContrailSimulation.h"
+      - "src/render/VortexSheetRenderField.h"
       - "tools/patch_v6_9_vortex_sheet_runtime.py"
+      - "tools/patch_v6_9_vortex_sheet_tests.py"
       - ".github/workflows/engine-v1-v6-9-vortex-sheet-core.yml"
   pull_request:
     paths:
       - "src/engine/WakeVortexSheet.h"
       - "src/engine/ContrailSimulation.h"
+      - "src/render/VortexSheetRenderField.h"
       - "tools/patch_v6_9_vortex_sheet_runtime.py"
+      - "tools/patch_v6_9_vortex_sheet_tests.py"
       - ".github/workflows/engine-v1-v6-9-vortex-sheet-core.yml"
 
 permissions:
@@ -31,10 +35,12 @@ jobs:
       - name: Check out v6.9 source
         uses: actions/checkout@v4
 
-      - name: Apply v6.9 live marker integration
+      - name: Apply v6.9 live marker integration and tests
         shell: pwsh
         run: |
           python tools/patch_v6_9_vortex_sheet_runtime.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python tools/patch_v6_9_vortex_sheet_tests.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Verify architectural contract
@@ -42,7 +48,9 @@ jobs:
         run: |
           $sheet = Get-Content src/engine/WakeVortexSheet.h -Raw
           $parcel = Get-Content src/engine/ContrailSimulation.h -Raw
+          $field = Get-Content src/render/VortexSheetRenderField.h -Raw
           $live = Get-Content src/engine/LiveContrailEngine.cpp -Raw
+          $tests = Get-Content tests/LiveContrailDebugTests.cpp -Raw
           if ($sheet -notmatch 'enum class WakeSheetLane') { throw "wake-sheet lanes missing" }
           foreach ($lane in @('Inner','Core','Outer','Secondary')) {
             if ($sheet -notmatch $lane) { throw "wake-sheet lane $lane missing" }
@@ -55,6 +63,11 @@ jobs:
           if ($live -notmatch 'initializeWakeVortexSheet') { throw "live emission does not initialise the marker sheet" }
           if ($live -notmatch 'advanceWakeVortexSheet') { throw "live runtime does not advance the marker sheet" }
           if ($live -notmatch 'ambientWakeVelocityWorld') { throw "marker field does not receive ambient advection" }
+          if ($field -notmatch 'buildVortexSheetRenderField') { throw "final marker render field missing" }
+          if ($field -match 'trailTangentLocal') { throw "v6.9 render field reused legacy undisplaced tangent" }
+          if ($field -notmatch 'worldTangent') { throw "deformed marker tangent missing" }
+          if ($field -notmatch 'maximumLaneGapM') { throw "lane continuity metric missing" }
+          if ($tests -notmatch 'v6.9 geometry tangents follow displaced marker lanes') { throw "v6.9 tangent regression test missing" }
 
       - name: Fetch X-Plane Plugin SDK 4.3.0
         id: sdk

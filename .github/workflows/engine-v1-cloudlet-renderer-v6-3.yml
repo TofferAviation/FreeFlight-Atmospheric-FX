@@ -1,0 +1,231 @@
+name: Build Renderer Foundation v6.3 Soft Morphology + Onset Alignment
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - agent/levelup-particle-renderer-v5
+    paths:
+      - "src/ContrailCloudletRendererV62.h"
+      - "tools/generate_v6_3_morphology_assets.py"
+      - "tools/patch_v6_3_morphology_onset.py"
+      - ".github/workflows/engine-v1-cloudlet-renderer-v6-3.yml"
+  pull_request:
+    branches:
+      - engine/v1
+    paths:
+      - "src/ContrailCloudletRendererV62.h"
+      - "tools/generate_v6_3_morphology_assets.py"
+      - "tools/patch_v6_3_morphology_onset.py"
+      - ".github/workflows/engine-v1-cloudlet-renderer-v6-3.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ffatmo-cloudlets-v63-${{ github.event.pull_request.number || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Check out renderer branch
+        uses: actions/checkout@v4
+        with:
+          ref: agent/levelup-particle-renderer-v5
+
+      - name: Apply stable wake baseline through v6.3
+        shell: pwsh
+        run: |
+          python tools/fix_v5_5_regex_literals.py
+          python tools/patch_v5_4_1_runtime.py
+          python tools/patch_v5_5_parcel_clusters.py
+          python tools/patch_v5_5_1_visibility.py
+          python tools/patch_v5_5_2_cruise_visibility.py
+          python tools/patch_v5_6_connected_cloud_swirl.py
+          python tools/patch_v6_1_cloudlet_renderer.py
+          python tools/patch_v6_2_filled_cloud_renderer.py
+          python tools/patch_v6_3_morphology_onset.py
+
+          $plugin = Get-Content src/ContrailDebugPlugin.cpp -Raw
+          $renderer = Get-Content src/ContrailCloudletRendererV62.h -Raw
+          if ($plugin -notmatch '3D CLOUD V6\.3 READY') { throw "v6.3 overlay identity missing" }
+          if ($plugin -notmatch 'NATIVE_3D_MORPHOLOGY_FIELD') { throw "v6.3 report identity missing" }
+          if ($plugin -notmatch 'kHeatBlurHandoffSeconds = 0\.08f') { throw "bounded near-field handoff constant missing" }
+          if ($plugin -notmatch 'spatialOnsetM') { throw "spatial onset decoupling missing" }
+          if ($plugin -notmatch 'visual_head_spatial_onset_target_m') { throw "onset distance diagnostic missing" }
+          if ($plugin -notmatch 'engine_exhaust_body_offset_') { throw "engine exhaust diagnostics missing" }
+          if ($renderer -notmatch 'kAssetCount = 8') { throw "eight morphology assets missing" }
+          if ($renderer -notmatch 'kInstancesPerAsset = 128') { throw "v6.3 fixed 1024 pool split missing" }
+          if ($renderer -notmatch 'assetForCloud') { throw "soft/dense morphology selector missing" }
+          if ($renderer -notmatch 'applyPackingOffset') { throw "stable micro-packing missing" }
+          if ($renderer -notmatch 'budget \* 0\.34') { throw "continuity fill budget was not increased" }
+          if ($renderer -cmatch 'xplm_Phase_Modern3D|XPLMRegisterDrawCallback|PARTICLE_SYSTEM|BILLBOARD_MODE|ANIM_billboard') { throw "unsupported renderer path leaked into v6.3" }
+
+      - name: Generate and validate eight morphology assets
+        shell: pwsh
+        run: |
+          python tools/generate_v6_3_morphology_assets.py generated-v63-assets
+          @'
+          from pathlib import Path
+          import re, struct, zlib
+
+          root = Path("generated-v63-assets")
+          ages = ["near", "young", "mature", "old"]
+          variants = ["soft", "dense"]
+          extent_by_variant = {variant: [] for variant in variants}
+          alpha_stats = {}
+
+          def png_alpha(path):
+              data = path.read_bytes()
+              if data[:8] != b"\x89PNG\r\n\x1a\n":
+                  raise RuntimeError(f"Not PNG: {path}")
+              width, height = struct.unpack(">II", data[16:24])
+              pos = 8
+              payload = bytearray()
+              while pos < len(data):
+                  length = struct.unpack(">I", data[pos:pos+4])[0]
+                  kind = data[pos+4:pos+8]
+                  chunk = data[pos+8:pos+8+length]
+                  pos += 12 + length
+                  if kind == b"IDAT": payload.extend(chunk)
+                  if kind == b"IEND": break
+              raw = zlib.decompress(bytes(payload))
+              stride = width * 4
+              alphas = []
+              cursor = 0
+              for _ in range(height):
+                  filter_type = raw[cursor]
+                  if filter_type != 0:
+                      raise RuntimeError(f"Unexpected PNG filter {filter_type}: {path}")
+                  cursor += 1
+                  row = raw[cursor:cursor+stride]
+                  cursor += stride
+                  alphas.extend(row[3::4])
+              return width, height, min(alphas), max(alphas), sum(alphas)/len(alphas)
+
+          for age in ages:
+              for variant in variants:
+                  name = f"{age}_{variant}"
+                  obj_path = root / f"contrail_cloudlet_{name}.obj"
+                  png_path = root / f"contrail_cloudlet_{name}.png"
+                  if not obj_path.exists() or not png_path.exists():
+                      raise RuntimeError(f"Missing v6.3 asset {name}")
+                  obj = obj_path.read_text()
+                  forbidden = ("PARTICLE_SYSTEM", "EMITTER", "BILLBOARD", "ANIM_billboard")
+                  if any(token in obj for token in forbidden):
+                      raise RuntimeError(f"{name}: forbidden particle/billboard primitive")
+                  if "ATTR_blend" not in obj or "GLOBAL_no_shadow" not in obj or "TRIS 0 " not in obj:
+                      raise RuntimeError(f"{name}: native 3-D render state missing")
+                  vertices = []
+                  for line in obj.splitlines():
+                      if line.startswith("VT "):
+                          fields = line.split()
+                          vertices.append(tuple(float(v) for v in fields[1:4]))
+                  if len(vertices) < 350:
+                      raise RuntimeError(f"{name}: too few vertices {len(vertices)}")
+                  z_extent = max(v[2] for v in vertices) - min(v[2] for v in vertices)
+                  x_extent = max(v[0] for v in vertices) - min(v[0] for v in vertices)
+                  extent_by_variant[variant].append((z_extent, x_extent))
+                  alpha_stats[name] = png_alpha(png_path)
+                  if alpha_stats[name][:2] != (256, 256):
+                      raise RuntimeError(f"{name}: unexpected texture dimensions {alpha_stats[name][:2]}")
+
+          for variant in variants:
+              extents = extent_by_variant[variant]
+              if not all(extents[i][0] < extents[i+1][0] for i in range(3)):
+                  raise RuntimeError(f"{variant}: longitudinal growth is not monotonic: {extents}")
+              if not all(extents[i][1] < extents[i+1][1] for i in range(3)):
+                  raise RuntimeError(f"{variant}: width growth is not monotonic: {extents}")
+          for age in ages:
+              soft = alpha_stats[f"{age}_soft"]
+              dense = alpha_stats[f"{age}_dense"]
+              if not soft[4] < dense[4]:
+                  raise RuntimeError(f"{age}: soft texture is not optically lighter than dense: {soft} vs {dense}")
+              if dense[3] > 105:
+                  raise RuntimeError(f"{age}: dense shell peak alpha is too opaque: {dense[3]}")
+          print("Validated v6.3 morphology extents:", extent_by_variant)
+          print("Validated v6.3 alpha stats:", alpha_stats)
+          '@ | python -
+
+      - name: Fetch X-Plane Plugin SDK 4.3.0
+        id: sdk
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path third_party | Out-Null
+          $archive = Join-Path $pwd "third_party/XPSDK430.zip"
+          $destination = Join-Path $pwd "third_party/xplane-sdk"
+          for ($attempt = 1; $attempt -le 5; $attempt++) {
+            try {
+              if (Test-Path $archive) { Remove-Item $archive -Force }
+              Invoke-WebRequest -Uri "https://developer.x-plane.com/wp-content/plugins/code-sample-generation/sdk_zip_files/XPSDK430.zip" -OutFile $archive -Headers @{ "User-Agent" = "FFAtmo-GitHub-Actions" }
+              if ((Get-Item $archive).Length -lt 1000000) { throw "SDK archive is unexpectedly small" }
+              break
+            } catch {
+              if ($attempt -eq 5) { throw }
+              Start-Sleep -Seconds (8 * $attempt)
+            }
+          }
+          Expand-Archive -LiteralPath $archive -DestinationPath $destination -Force
+          $header = Get-ChildItem $destination -Recurse -Filter "XPLMPlugin.h" | Where-Object { $_.FullName.Replace('\', '/') -like '*/CHeaders/XPLM/XPLMPlugin.h' } | Select-Object -First 1
+          if (-not $header) { throw "XPLMPlugin.h was not found" }
+          $root = Split-Path (Split-Path (Split-Path $header.FullName -Parent) -Parent) -Parent
+          "path=$root" >> $env:GITHUB_OUTPUT
+
+      - name: Compile plugin and deterministic tests
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path build-logs | Out-Null
+          cmake -S . -B build-v63 -A x64 -DXPLANE_SDK="${{ steps.sdk.outputs.path }}" -DFFATMO_BUILD_PLUGIN=OFF -DFFATMO_BUILD_COMPANION=OFF -DFFATMO_BUILD_IMGUI_PANEL=OFF -DFFATMO_BUILD_GEOMETRY_DEBUG=OFF -DFFATMO_BUILD_RECORDER_DEBUG=OFF -DFFATMO_BUILD_CONTRAIL_DEBUG=ON -DFFATMO_BUILD_REPLAY_RUNNER=OFF -DFFATMO_BUILD_TESTS=ON -DFFATMO_GIT_REVISION="${{ github.sha }}"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & cmake --build build-v63 --config Release --target FFAtmoContrailDebug ffatmo_core_tests ffatmo_acf_tests ffatmo_replay_tests ffatmo_replay_runner_tests ffatmo_contrail_tests ffatmo_live_contrail_debug_tests ffatmo_contrail_render_planner_tests *> build-logs/build.txt
+          if ($LASTEXITCODE -ne 0) { Get-Content build-logs/build.txt; exit $LASTEXITCODE }
+          & ctest --test-dir build-v63 -C Release --output-on-failure *> build-logs/tests.txt
+          if ($LASTEXITCODE -ne 0) { Get-Content build-logs/tests.txt; exit $LASTEXITCODE }
+          if (-not (Test-Path package/FFAtmoContrailDebug/64/win.xpl)) { throw "v6.3 plugin was not produced" }
+
+      - name: Assemble v6.3 test package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path artifact/FFAtmoContrailDebug/64 | Out-Null
+          New-Item -ItemType Directory -Force -Path artifact/FFAtmoContrailDebug/assets | Out-Null
+          Copy-Item package/FFAtmoContrailDebug/64/win.xpl artifact/FFAtmoContrailDebug/64/win.xpl -Force
+          Copy-Item generated-v63-assets/* artifact/FFAtmoContrailDebug/assets/ -Force
+          @'
+          FFAtmo Renderer Foundation v6.3 - Soft Morphology + Onset Alignment
+
+          v6.3 keeps the successful native XPLMInstance 3-D renderer and the fixed
+          1024-instance budget. The four wake-age classes now each have soft/dense
+          morphology variants. Optical strength chooses between them, stable micro-
+          packing removes ruler-like repetition, and the continuity fill share is larger.
+
+          The v6.2 test exposed a ~61.7 m near-field gap. v6.3 decouples thermodynamic
+          nucleation time from the faint visible spatial onset. The synthetic head is
+          now bounded to roughly 18-28 m behind the ACF nozzle reference while the real
+          condensation timing continues to drive physical parcel ice/opacity development.
+
+          Confirm "3D CLOUD V6.3 READY". Use Forced Dry Preview. Test directly behind
+          the aircraft first, then side/above/below and one gentle bank. Export a report.
+          Target: maximum exhaust-to-first-visible segment near or below 30 m, correct
+          engine alignment, softer/non-identical cloud bodies, and no ownership instability.
+          '@ | Set-Content artifact/FFAtmoContrailDebug/README_TESTING.txt -Encoding utf8
+          "renderer=engine-v1-levelup-b738-v6.3-soft-morphology-onset-alignment" | Set-Content artifact/FFAtmoContrailDebug/BUILD_INFO.txt -Encoding utf8
+          "git_revision=${{ github.sha }}" | Add-Content artifact/FFAtmoContrailDebug/BUILD_INFO.txt -Encoding utf8
+
+      - name: Upload build diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: FFAtmo-v6.3-build-diagnostics
+          path: build-logs
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Upload v6.3 package
+        uses: actions/upload-artifact@v4
+        with:
+          name: FFAtmoContrailDebug-v6.3-win64
+          path: artifact/FFAtmoContrailDebug
+          if-no-files-found: error
+          retention-days: 14

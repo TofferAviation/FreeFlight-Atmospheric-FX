@@ -28,6 +28,7 @@ path.write_text(text, encoding="utf-8", newline="\n")
 print("Stabilized v6.8 diagnostic reset matcher")
 
 # The established v6.8 retry workflow calls this stabilizer before the main
-# v6.8 patcher. Apply the curved-fill matcher repair here as well so the same
-# trusted workflow exercises both corrections without requiring another sim build.
+# v6.8 patcher. Apply all known source-shape repairs here so one trusted CI path
+# validates the complete realism build before another simulator restart.
 runpy.run_path(str(Path(__file__).with_name("fix_v6_8_fill_matcher.py")), run_name="__main__")
+runpy.run_path(str(Path(__file__).with_name("fix_v6_8_report_matcher.py")), run_name="__main__")

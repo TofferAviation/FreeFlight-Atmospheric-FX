@@ -48,6 +48,17 @@ text = replace_once(
     "v6.9 renderer member",
 )
 
+# v6.8 report/diagnostic code can refer to the concrete renderer class directly.
+# Redirect those static capacity references to the v6.9 renderer. The old swirl
+# radius fields are compatibility-only and have no physical meaning in the new
+# material-sheet model, so map them to zero rather than inventing a fake radius.
+text = text.replace(
+    "ContrailCloudletRenderer::kVisibleCapacity",
+    "ContrailVortexSheetRenderer::kVisibleCapacity",
+)
+text = text.replace("worldRenderer_.maximumSwirlRadiusM()", "0.0")
+text = text.replace("worldRenderer_.meanSwirlRadiusM()", "0.0")
+
 # The render planner remains alive for near-field/legacy diagnostics, but the
 # actual native 3-D instances now consume the final solver-produced marker field.
 text = replace_once(
@@ -114,6 +125,7 @@ required = (
     "ContrailVortexSheetRenderer worldRenderer_;",
     "buildVortexSheetRenderField(liveEngine_.parcels())",
     "vortexWorldOrigin",
+    "ContrailVortexSheetRenderer::kVisibleCapacity",
 )
 for token in required:
     if token not in text:
@@ -121,6 +133,8 @@ for token in required:
 
 if "worldRenderer_.update(latestRenderPlan_.samples);" in text:
     raise RuntimeError("legacy centreline render-plan submission survived v6.9 patch")
+if "ContrailCloudletRenderer::kVisibleCapacity" in text:
+    raise RuntimeError("legacy concrete renderer capacity reference survived v6.9 patch")
 
 PLUGIN.write_text(text, encoding="utf-8", newline="\n")
 print("Integrated Renderer Foundation v6.9 Lagrangian Vortex Sheet into X-Plane simulator path")

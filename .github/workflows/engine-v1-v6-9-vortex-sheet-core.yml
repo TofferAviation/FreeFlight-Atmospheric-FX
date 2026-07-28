@@ -9,18 +9,24 @@ on:
       - "src/engine/WakeVortexSheet.h"
       - "src/engine/ContrailSimulation.h"
       - "src/render/VortexSheetRenderField.h"
+      - "src/ContrailVortexSheetRenderer.h"
       - "tools/patch_v6_9_vortex_sheet_runtime.py"
       - "tools/patch_v6_9_vortex_sheet_tests.py"
       - "tools/generate_v6_9_vortex_sheet_preview.py"
+      - "tools/patch_v6_9_simulator_renderer.py"
+      - "tools/generate_v6_9_ice_volume_assets.py"
       - ".github/workflows/engine-v1-v6-9-vortex-sheet-core.yml"
   pull_request:
     paths:
       - "src/engine/WakeVortexSheet.h"
       - "src/engine/ContrailSimulation.h"
       - "src/render/VortexSheetRenderField.h"
+      - "src/ContrailVortexSheetRenderer.h"
       - "tools/patch_v6_9_vortex_sheet_runtime.py"
       - "tools/patch_v6_9_vortex_sheet_tests.py"
       - "tools/generate_v6_9_vortex_sheet_preview.py"
+      - "tools/patch_v6_9_simulator_renderer.py"
+      - "tools/generate_v6_9_ice_volume_assets.py"
       - ".github/workflows/engine-v1-v6-9-vortex-sheet-core.yml"
 
 permissions:
@@ -121,6 +127,129 @@ jobs:
           python tools/generate_v6_9_vortex_sheet_preview.py v6_9_marker_field.csv generated-v69-preview --gate 2>&1 | Tee-Object -FilePath build-logs/preview-gate.txt
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      - name: Restore source and apply accepted baseline through v6.8
+        shell: pwsh
+        run: |
+          git reset --hard HEAD
+          $scripts = @(
+            "tools/fix_v5_5_regex_literals.py",
+            "tools/patch_v5_4_1_runtime.py",
+            "tools/patch_v5_5_parcel_clusters.py",
+            "tools/patch_v5_5_1_visibility.py",
+            "tools/patch_v5_5_2_cruise_visibility.py",
+            "tools/patch_v5_6_connected_cloud_swirl.py",
+            "tools/patch_v6_1_cloudlet_renderer.py",
+            "tools/patch_v6_2_filled_cloud_renderer.py",
+            "tools/patch_v6_3_morphology_onset_v2.py",
+            "tools/patch_v6_4_head_endpoint_pool.py",
+            "tools/fix_v6_5_report_matchers.py",
+            "tools/patch_v6_5_handoff_vortex.py",
+            "tools/patch_v6_6_smooth_stable_field.py",
+            "tools/fix_v6_7_report_matcher.py",
+            "tools/patch_v6_7_physics_coupled_rollup.py",
+            "tools/patch_v6_8_visible_primary_rollup.py"
+          )
+          foreach ($script in $scripts) {
+            "RUN $script" | Tee-Object -FilePath build-logs/simulator-patch-baseline.txt -Append
+            & python $script 2>&1 | Tee-Object -FilePath build-logs/simulator-patch-baseline.txt -Append
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+
+      - name: Integrate v6.9 marker runtime into X-Plane renderer
+        shell: pwsh
+        run: |
+          python tools/patch_v6_9_vortex_sheet_runtime.py 2>&1 | Tee-Object -FilePath build-logs/simulator-patch-runtime.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python tools/patch_v6_9_simulator_renderer.py 2>&1 | Tee-Object -FilePath build-logs/simulator-patch-renderer.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          $plugin = Get-Content src/ContrailDebugPlugin.cpp -Raw
+          $renderer = Get-Content src/ContrailVortexSheetRenderer.h -Raw
+          if ($plugin -notmatch 'ContrailVortexSheetRenderer') { throw "v6.9 renderer is not wired into plugin" }
+          if ($plugin -notmatch 'buildVortexSheetRenderField\(liveEngine_\.parcels\(\)\)') { throw "actual marker field is not submitted" }
+          if ($plugin -match 'worldRenderer_\.update\(latestRenderPlan_\.samples\)') { throw "legacy centreline renderer survived" }
+          if ($renderer -notmatch 'selectLaneCoherently') { throw "lane-coherent selector missing" }
+          if ($renderer -match 'trailTangentLocal') { throw "legacy tangent returned in v6.9 renderer" }
+
+      - name: Generate v6.9 elongated low-occupancy ice volumes
+        shell: pwsh
+        run: |
+          python tools/generate_v6_9_ice_volume_assets.py generated-v69-assets 2>&1 | Tee-Object -FilePath build-logs/simulator-assets.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          @'
+          from pathlib import Path
+          root = Path("generated-v69-assets")
+          for lane in ("inner", "core", "outer", "secondary"):
+              obj = root / f"contrail_v69_{lane}.obj"
+              png = root / f"contrail_v69_{lane}.png"
+              if not obj.exists() or not png.exists():
+                  raise RuntimeError(f"missing {lane} lane asset")
+              text = obj.read_text()
+              if "GLOBAL_no_blend 0.500" not in text:
+                  raise RuntimeError(f"{lane}: alpha-test state missing")
+              if any(t in text for t in ("ATTR_blend", "ATTR_no_cull", "BILLBOARD", "PARTICLE_SYSTEM", "TEXTURE_LIT")):
+                  raise RuntimeError(f"{lane}: unsupported state")
+              zs = [float(line.split()[3]) for line in text.splitlines() if line.startswith("VT ")]
+              if max(zs) - min(zs) < 50.0:
+                  raise RuntimeError(f"{lane}: volume is not elongated")
+          '@ | python -
+
+      - name: Compile first proper v6.9 X-Plane simulator build
+        shell: pwsh
+        run: |
+          cmake -S . -B build-v69-sim -A x64 -DXPLANE_SDK="${{ steps.sdk.outputs.path }}" -DFFATMO_BUILD_PLUGIN=OFF -DFFATMO_BUILD_COMPANION=OFF -DFFATMO_BUILD_IMGUI_PANEL=OFF -DFFATMO_BUILD_GEOMETRY_DEBUG=OFF -DFFATMO_BUILD_RECORDER_DEBUG=OFF -DFFATMO_BUILD_CONTRAIL_DEBUG=ON -DFFATMO_BUILD_REPLAY_RUNNER=OFF -DFFATMO_BUILD_TESTS=ON -DFFATMO_GIT_REVISION="${{ github.sha }}"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cmake --build build-v69-sim --config Release --target FFAtmoContrailDebug ffatmo_live_contrail_debug_tests *> build-logs/simulator-build.txt
+          if ($LASTEXITCODE -ne 0) { Get-Content build-logs/simulator-build.txt; exit $LASTEXITCODE }
+          ctest --test-dir build-v69-sim -C Release -R ffatmo_live_contrail_debug_tests --output-on-failure *> build-logs/simulator-tests.txt
+          if ($LASTEXITCODE -ne 0) { Get-Content build-logs/simulator-tests.txt; exit $LASTEXITCODE }
+          if (-not (Test-Path package/FFAtmoContrailDebug/64/win.xpl)) { throw "v6.9 win.xpl was not produced" }
+
+      - name: Assemble first proper v6.9 simulator package
+        shell: pwsh
+        run: |
+          Remove-Item artifact-v69-sim -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force -Path artifact-v69-sim/FFAtmoContrailDebug/64 | Out-Null
+          New-Item -ItemType Directory -Force -Path artifact-v69-sim/FFAtmoContrailDebug/assets | Out-Null
+          New-Item -ItemType Directory -Force -Path artifact-v69-sim/FFAtmoContrailDebug/diagnostics | Out-Null
+          New-Item -ItemType Directory -Force -Path artifact-v69-sim/FFAtmoContrailDebug/reports | Out-Null
+          Copy-Item package/FFAtmoContrailDebug/64/win.xpl artifact-v69-sim/FFAtmoContrailDebug/64/win.xpl -Force
+          Copy-Item generated-v69-assets/* artifact-v69-sim/FFAtmoContrailDebug/assets/ -Force
+          Copy-Item generated-v69-preview/* artifact-v69-sim/FFAtmoContrailDebug/diagnostics/ -Force -ErrorAction SilentlyContinue
+          @'
+          FFAtmo Renderer Foundation v6.9 - First Proper Simulator Build
+
+          This build renders the real Lagrangian WakeFluidSolver material-marker field.
+          It no longer sends the v6.8 primary/fill/decorative-swirl centreline field
+          to X-Plane.
+
+          Render lanes:
+            inner sheet
+            core sheet
+            outer sheet
+            secondary wake
+
+          Each lane is persistent, independently advected, and oriented from its
+          already-curled neighbouring marker positions. The fixed 1024 XPLMInstance
+          pool is allocated lane-coherently across both engines. Four overlapping
+          elongated pure-white micro-dither ice volumes replace the compact blobs.
+
+          Install/test:
+          1. Remove/rename the previous FFAtmoContrailDebug test folder.
+          2. Place this FFAtmoContrailDebug folder in X-Plane 12/Resources/plugins/.
+          3. Use the LevelUp 737-800NG and cruise conditions.
+          4. If needed, select Forced Persistent Preview from the plugin menu.
+          5. Allow the wake to age beyond 7 seconds so the secondary lane appears.
+          6. Inspect rear-quarter, side and top views, then export the report.
+
+          Acceptance target: a broad, folding, counter-rotating twin wake with
+          visible cross-section deformation and later secondary-wake separation.
+          '@ | Set-Content artifact-v69-sim/FFAtmoContrailDebug/README_TESTING.txt -Encoding utf8
+          "renderer=engine-v1-levelup-b738-v6.9-lagrangian-vortex-sheet-first-proper-simulator" | Set-Content artifact-v69-sim/FFAtmoContrailDebug/BUILD_INFO.txt -Encoding utf8
+          "git_revision=${{ github.sha }}" | Add-Content artifact-v69-sim/FFAtmoContrailDebug/BUILD_INFO.txt -Encoding utf8
+          "instance_budget=1024" | Add-Content artifact-v69-sim/FFAtmoContrailDebug/BUILD_INFO.txt -Encoding utf8
+          "lanes=inner,core,outer,secondary" | Add-Content artifact-v69-sim/FFAtmoContrailDebug/BUILD_INFO.txt -Encoding utf8
+
       - name: Upload v6.9 geometry diagnostics
         if: always()
         uses: actions/upload-artifact@v4
@@ -131,4 +260,12 @@ jobs:
             v6_9_marker_field.csv
             generated-v69-preview
           if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Upload first proper v6.9 simulator ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: FFAtmoContrailDebug-v6.9-first-proper-simulator-win64
+          path: artifact-v69-sim/FFAtmoContrailDebug
+          if-no-files-found: error
           retention-days: 14

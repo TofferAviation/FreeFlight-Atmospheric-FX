@@ -20,6 +20,12 @@ def main() -> None:
         '#include "engine/WakeFluidSolver.h"\n#include "render/VortexSheetRenderField.h"\n',
         "v6.9 render-field include",
     )
+    source = replace_once(
+        source,
+        '#include <cstdlib>\n',
+        '#include <cstdlib>\n#include <fstream>\n',
+        "v6.9 preview export include",
+    )
 
     anchor = '''    require(observedRollup,
             "live parcels receive finite-core vortex displacement");
@@ -91,12 +97,34 @@ def main() -> None:
     require(observedFiniteCurvedTangent,
             "v6.9 geometry tangents follow displaced marker lanes rather than a fixed centreline");
 
+    // Export the exact final marker positions produced by LiveContrailEngine +
+    // WakeFluidSolver. The v6.9 preview gate consumes this file; it does not
+    // regenerate a synthetic phase curve in Python.
+    std::ofstream previewCsv("v6_9_marker_field.csv", std::ios::trunc);
+    require(previewCsv.good(), "v6.9 marker-field preview CSV opens");
+    previewCsv << "render_id,parcel_id,engine,lane,age_s,x_m,y_m,z_m,tx,ty,tz\\n";
+    for (const auto& point : renderField.points) {
+        previewCsv
+            << point.renderId << ','
+            << point.sourceParcelId << ','
+            << point.engineIndex << ','
+            << static_cast<unsigned>(point.lane) << ','
+            << point.ageSeconds << ','
+            << point.worldPositionM.x << ','
+            << point.worldPositionM.y << ','
+            << point.worldPositionM.z << ','
+            << point.worldTangent.x << ','
+            << point.worldTangent.y << ','
+            << point.worldTangent.z << '\\n';
+    }
+    previewCsv.close();
+
     std::cout << "FFAtmo Wake Fluid Simulation v1 and v6.9 vortex-sheet tests passed\\n";
 '''
 
     source = replace_once(source, anchor, replacement, "v6.9 deterministic tests")
     TEST.write_text(source, encoding="utf-8")
-    print("Applied v6.9 vortex-sheet deterministic tests")
+    print("Applied v6.9 vortex-sheet deterministic tests and geometry export")
 
 
 if __name__ == "__main__":

@@ -1,0 +1,182 @@
+name: Build Renderer Foundation v6.9.1 Visual Hotfix
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - engine/v6.9-lagrangian-vortex-sheet
+    paths:
+      - "tools/generate_v6_9_1_ice_streak_assets.py"
+      - "tools/patch_v6_9_1_visual_safety.py"
+      - ".github/workflows/engine-v1-v6-9-1-visual-hotfix.yml"
+  pull_request:
+    paths:
+      - "tools/generate_v6_9_1_ice_streak_assets.py"
+      - "tools/patch_v6_9_1_visual_safety.py"
+      - ".github/workflows/engine-v1-v6-9-1-visual-hotfix.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ffatmo-v691-visual-${{ github.event.pull_request.number || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Check out v6.9.1 source
+        uses: actions/checkout@v4
+
+      - name: Reconstruct accepted baseline through v6.8
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path build-logs | Out-Null
+          $scripts = @(
+            "tools/fix_v5_5_regex_literals.py",
+            "tools/patch_v5_4_1_runtime.py",
+            "tools/patch_v5_5_parcel_clusters.py",
+            "tools/patch_v5_5_1_visibility.py",
+            "tools/patch_v5_5_2_cruise_visibility.py",
+            "tools/patch_v5_6_connected_cloud_swirl.py",
+            "tools/patch_v6_1_cloudlet_renderer.py",
+            "tools/patch_v6_2_filled_cloud_renderer.py",
+            "tools/patch_v6_3_morphology_onset_v2.py",
+            "tools/patch_v6_4_head_endpoint_pool.py",
+            "tools/fix_v6_5_report_matchers.py",
+            "tools/patch_v6_5_handoff_vortex.py",
+            "tools/patch_v6_6_smooth_stable_field.py",
+            "tools/fix_v6_7_report_matcher.py",
+            "tools/patch_v6_7_physics_coupled_rollup.py",
+            "tools/fix_v6_8_diagnostic_reset.py",
+            "tools/patch_v6_8_visible_primary_rollup.py"
+          )
+          foreach ($script in $scripts) {
+            "RUN $script" | Tee-Object -FilePath build-logs/patch-baseline.txt -Append
+            & python $script 2>&1 | Tee-Object -FilePath build-logs/patch-baseline.txt -Append
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+
+      - name: Apply v6.9 Lagrangian marker runtime
+        shell: pwsh
+        run: |
+          python tools/patch_v6_9_vortex_sheet_runtime.py 2>&1 | Tee-Object -FilePath build-logs/patch-v69-runtime.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python tools/patch_v6_9_simulator_renderer.py 2>&1 | Tee-Object -FilePath build-logs/patch-v69-renderer.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python tools/patch_v6_9_1_visual_safety.py 2>&1 | Tee-Object -FilePath build-logs/patch-v691.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Generate curvature-safe streak assets
+        shell: pwsh
+        run: |
+          python tools/generate_v6_9_1_ice_streak_assets.py generated-v691-assets 2>&1 | Tee-Object -FilePath build-logs/assets.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          @'
+          from pathlib import Path
+          root = Path("generated-v691-assets")
+          expected = ["inner", "core", "outer", "secondary"]
+          for lane in expected:
+              obj = root / f"contrail_v69_{lane}.obj"
+              png = root / f"contrail_v69_{lane}.png"
+              if not obj.exists() or not png.exists():
+                  raise RuntimeError(f"missing {lane} asset")
+              text = obj.read_text()
+              if "GLOBAL_no_blend 0.500" not in text:
+                  raise RuntimeError(f"{lane}: binary-alpha state missing")
+              pts = [line.split() for line in text.splitlines() if line.startswith("VT ")]
+              xs = [float(p[1]) for p in pts]
+              ys = [float(p[2]) for p in pts]
+              zs = [float(p[3]) for p in pts]
+              length = max(zs) - min(zs)
+              width = max(xs) - min(xs)
+              height = max(ys) - min(ys)
+              if not (8.0 <= length <= 20.0):
+                  raise RuntimeError(f"{lane}: rigid length safety gate failed: {length}")
+              if width > 1.5 or height > 1.5:
+                  raise RuntimeError(f"{lane}: cross-section safety gate failed: {width} x {height}")
+          '@ | python -
+
+      - name: Fetch X-Plane Plugin SDK 4.3.0
+        id: sdk
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path third_party | Out-Null
+          $archive = Join-Path $pwd "third_party/XPSDK430.zip"
+          $destination = Join-Path $pwd "third_party/xplane-sdk"
+          for ($attempt = 1; $attempt -le 5; $attempt++) {
+            try {
+              if (Test-Path $archive) { Remove-Item $archive -Force }
+              Invoke-WebRequest -Uri "https://developer.x-plane.com/wp-content/plugins/code-sample-generation/sdk_zip_files/XPSDK430.zip" -OutFile $archive -Headers @{ "User-Agent" = "FFAtmo-GitHub-Actions" }
+              if ((Get-Item $archive).Length -lt 1000000) { throw "SDK archive is unexpectedly small" }
+              break
+            } catch {
+              if ($attempt -eq 5) { throw }
+              Start-Sleep -Seconds (8 * $attempt)
+            }
+          }
+          Expand-Archive -LiteralPath $archive -DestinationPath $destination -Force
+          $header = Get-ChildItem $destination -Recurse -Filter "XPLMPlugin.h" | Where-Object { $_.FullName.Replace('\', '/') -like '*/CHeaders/XPLM/XPLMPlugin.h' } | Select-Object -First 1
+          if (-not $header) { throw "XPLMPlugin.h was not found" }
+          $root = Split-Path (Split-Path (Split-Path $header.FullName -Parent) -Parent) -Parent
+          "path=$root" >> $env:GITHUB_OUTPUT
+
+      - name: Compile v6.9.1 plugin and tests
+        shell: pwsh
+        run: |
+          cmake -S . -B build-v691 -A x64 -DXPLANE_SDK="${{ steps.sdk.outputs.path }}" -DFFATMO_BUILD_PLUGIN=OFF -DFFATMO_BUILD_COMPANION=OFF -DFFATMO_BUILD_IMGUI_PANEL=OFF -DFFATMO_BUILD_GEOMETRY_DEBUG=OFF -DFFATMO_BUILD_RECORDER_DEBUG=OFF -DFFATMO_BUILD_CONTRAIL_DEBUG=ON -DFFATMO_BUILD_REPLAY_RUNNER=OFF -DFFATMO_BUILD_TESTS=ON -DFFATMO_GIT_REVISION="${{ github.sha }}"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & cmake --build build-v691 --config Release --target FFAtmoContrailDebug ffatmo_core_tests ffatmo_acf_tests ffatmo_replay_tests ffatmo_replay_runner_tests ffatmo_contrail_tests ffatmo_live_contrail_debug_tests ffatmo_contrail_render_planner_tests *> build-logs/build.txt
+          if ($LASTEXITCODE -ne 0) { Get-Content build-logs/build.txt; exit $LASTEXITCODE }
+          & ctest --test-dir build-v691 -C Release --output-on-failure *> build-logs/tests.txt
+          if ($LASTEXITCODE -ne 0) { Get-Content build-logs/tests.txt; exit $LASTEXITCODE }
+          if (-not (Test-Path package/FFAtmoContrailDebug/64/win.xpl)) { throw "v6.9.1 win.xpl was not produced" }
+
+      - name: Assemble v6.9.1 visual hotfix package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path artifact/FFAtmoContrailDebug/64 | Out-Null
+          New-Item -ItemType Directory -Force -Path artifact/FFAtmoContrailDebug/assets | Out-Null
+          New-Item -ItemType Directory -Force -Path artifact/FFAtmoContrailDebug/reports | Out-Null
+          Copy-Item package/FFAtmoContrailDebug/64/win.xpl artifact/FFAtmoContrailDebug/64/win.xpl -Force
+          Copy-Item generated-v691-assets/* artifact/FFAtmoContrailDebug/assets/ -Force
+          @'
+          FFAtmo Renderer Foundation v6.9.1 - CURVATURE-SAFE VISUAL HOTFIX
+
+          Replaces rejected v6.9-R0 oversized 58-72 m rigid ice bodies.
+          Lagrangian wake physics and marker trajectories are unchanged.
+
+          Visual safety changes:
+          - inner/core/outer streaks use local 14-18 m rigid bodies
+          - all streak cross-sections are <= 1.5 m
+          - binary-alpha occupancy reduced substantially
+          - secondary wake visual budget reduced to 128 instances
+          - CI rejects any future asset longer than 20 m or wider than 1.5 m
+
+          Test from rear-quarter, side and top views. Broad curl should come from
+          marker motion itself, not from giant overlapping geometry.
+          '@ | Set-Content artifact/FFAtmoContrailDebug/README_TESTING.txt -Encoding utf8
+          "renderer=engine-v1-levelup-b738-v6.9.1-curvature-safe-hotfix" | Set-Content artifact/FFAtmoContrailDebug/BUILD_INFO.txt -Encoding utf8
+          "git_revision=${{ github.sha }}" | Add-Content artifact/FFAtmoContrailDebug/BUILD_INFO.txt -Encoding utf8
+          "main_lane_budget=256" | Add-Content artifact/FFAtmoContrailDebug/BUILD_INFO.txt -Encoding utf8
+          "secondary_lane_budget=128" | Add-Content artifact/FFAtmoContrailDebug/BUILD_INFO.txt -Encoding utf8
+          "rigid_asset_max_length_m=20" | Add-Content artifact/FFAtmoContrailDebug/BUILD_INFO.txt -Encoding utf8
+          "rigid_asset_max_cross_section_m=1.5" | Add-Content artifact/FFAtmoContrailDebug/BUILD_INFO.txt -Encoding utf8
+
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: FFAtmo-v6.9.1-visual-hotfix-diagnostics
+          path: build-logs
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Upload v6.9.1 simulator package
+        uses: actions/upload-artifact@v4
+        with:
+          name: FFAtmoContrailDebug-v6.9.1-curvature-safe-win64
+          path: artifact/FFAtmoContrailDebug
+          if-no-files-found: error
+          retention-days: 14

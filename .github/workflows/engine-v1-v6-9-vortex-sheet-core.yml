@@ -11,6 +11,7 @@ on:
       - "src/render/VortexSheetRenderField.h"
       - "tools/patch_v6_9_vortex_sheet_runtime.py"
       - "tools/patch_v6_9_vortex_sheet_tests.py"
+      - "tools/generate_v6_9_vortex_sheet_preview.py"
       - ".github/workflows/engine-v1-v6-9-vortex-sheet-core.yml"
   pull_request:
     paths:
@@ -19,6 +20,7 @@ on:
       - "src/render/VortexSheetRenderField.h"
       - "tools/patch_v6_9_vortex_sheet_runtime.py"
       - "tools/patch_v6_9_vortex_sheet_tests.py"
+      - "tools/generate_v6_9_vortex_sheet_preview.py"
       - ".github/workflows/engine-v1-v6-9-vortex-sheet-core.yml"
 
 permissions:
@@ -38,9 +40,10 @@ jobs:
       - name: Apply v6.9 live marker integration and tests
         shell: pwsh
         run: |
-          python tools/patch_v6_9_vortex_sheet_runtime.py
+          New-Item -ItemType Directory -Force -Path build-logs | Out-Null
+          python tools/patch_v6_9_vortex_sheet_runtime.py 2>&1 | Tee-Object -FilePath build-logs/patch-runtime.txt
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          python tools/patch_v6_9_vortex_sheet_tests.py
+          python tools/patch_v6_9_vortex_sheet_tests.py 2>&1 | Tee-Object -FilePath build-logs/patch-tests.txt
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Verify architectural contract
@@ -67,7 +70,7 @@ jobs:
           if ($field -match 'trailTangentLocal') { throw "v6.9 render field reused legacy undisplaced tangent" }
           if ($field -notmatch 'worldTangent') { throw "deformed marker tangent missing" }
           if ($field -notmatch 'maximumLaneGapM') { throw "lane continuity metric missing" }
-          if ($tests -notmatch 'v6.9 geometry tangents follow displaced marker lanes') { throw "v6.9 tangent regression test missing" }
+          if ($tests -notmatch 'v6_9_marker_field.csv') { throw "actual solver marker export missing" }
 
       - name: Fetch X-Plane Plugin SDK 4.3.0
         id: sdk
@@ -98,7 +101,34 @@ jobs:
         run: |
           cmake -S . -B build-v69-core -A x64 -DXPLANE_SDK="${{ steps.sdk.outputs.path }}" -DFFATMO_BUILD_PLUGIN=OFF -DFFATMO_BUILD_COMPANION=OFF -DFFATMO_BUILD_IMGUI_PANEL=OFF -DFFATMO_BUILD_GEOMETRY_DEBUG=OFF -DFFATMO_BUILD_RECORDER_DEBUG=OFF -DFFATMO_BUILD_CONTRAIL_DEBUG=ON -DFFATMO_BUILD_REPLAY_RUNNER=OFF -DFFATMO_BUILD_TESTS=ON -DFFATMO_GIT_REVISION="${{ github.sha }}"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          cmake --build build-v69-core --config Release --target ffatmo_core_tests ffatmo_contrail_tests ffatmo_live_contrail_debug_tests
+          cmake --build build-v69-core --config Release --target ffatmo_core_tests ffatmo_contrail_tests ffatmo_live_contrail_debug_tests *> build-logs/build.txt
+          if ($LASTEXITCODE -ne 0) { Get-Content build-logs/build.txt; exit $LASTEXITCODE }
+          ctest --test-dir build-v69-core -C Release --output-on-failure *> build-logs/tests.txt
+          if ($LASTEXITCODE -ne 0) { Get-Content build-logs/tests.txt; exit $LASTEXITCODE }
+
+      - name: Export actual WakeFluidSolver marker field
+        shell: pwsh
+        run: |
+          $exe = "build-v69-core/Release/ffatmo_live_contrail_debug_tests.exe"
+          if (-not (Test-Path $exe)) { throw "v6.9 live deterministic test executable missing" }
+          & $exe 2>&1 | Tee-Object -FilePath build-logs/marker-export.txt
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          ctest --test-dir build-v69-core -C Release --output-on-failure
+          if (-not (Test-Path v6_9_marker_field.csv)) { throw "actual solver marker field was not exported" }
+
+      - name: Generate and gate rear side top geometry previews
+        shell: pwsh
+        run: |
+          python tools/generate_v6_9_vortex_sheet_preview.py v6_9_marker_field.csv generated-v69-preview --gate 2>&1 | Tee-Object -FilePath build-logs/preview-gate.txt
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Upload v6.9 geometry diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: FFAtmo-v6.9-vortex-sheet-geometry
+          path: |
+            build-logs
+            v6_9_marker_field.csv
+            generated-v69-preview
+          if-no-files-found: ignore
+          retention-days: 14

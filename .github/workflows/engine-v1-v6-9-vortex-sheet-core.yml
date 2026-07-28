@@ -1,0 +1,79 @@
+name: Validate Renderer Foundation v6.9 Vortex Sheet Core
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - engine/v6.9-lagrangian-vortex-sheet
+    paths:
+      - "src/engine/WakeVortexSheet.h"
+      - "src/engine/ContrailSimulation.h"
+      - ".github/workflows/engine-v1-v6-9-vortex-sheet-core.yml"
+  pull_request:
+    paths:
+      - "src/engine/WakeVortexSheet.h"
+      - "src/engine/ContrailSimulation.h"
+      - ".github/workflows/engine-v1-v6-9-vortex-sheet-core.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ffatmo-v69-sheet-core-${{ github.event.pull_request.number || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: windows-latest
+    steps:
+      - name: Check out v6.9 source
+        uses: actions/checkout@v4
+
+      - name: Verify architectural contract
+        shell: pwsh
+        run: |
+          $sheet = Get-Content src/engine/WakeVortexSheet.h -Raw
+          $parcel = Get-Content src/engine/ContrailSimulation.h -Raw
+          if ($sheet -notmatch 'enum class WakeSheetLane') { throw "wake-sheet lanes missing" }
+          foreach ($lane in @('Inner','Core','Outer','Secondary')) {
+            if ($sheet -notmatch $lane) { throw "wake-sheet lane $lane missing" }
+          }
+          if ($sheet -notmatch 'WakeFluidState wakeFluid') { throw "markers do not own independent wake state" }
+          if ($sheet -notmatch 'previousWorldPositionM') { throw "persistent marker history missing" }
+          if ($sheet -notmatch 'advanceWakeFluidState') { throw "sheet is not driven by WakeFluidSolver" }
+          if ($sheet -notmatch 'activeForRendering') { throw "secondary wake activation state missing" }
+          if ($parcel -notmatch 'WakeVortexSheetState vortexSheet') { throw "contrail parcel does not carry v6.9 wake section" }
+
+      - name: Fetch X-Plane Plugin SDK 4.3.0
+        id: sdk
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path third_party | Out-Null
+          $archive = Join-Path $pwd "third_party/XPSDK430.zip"
+          $destination = Join-Path $pwd "third_party/xplane-sdk"
+          for ($attempt = 1; $attempt -le 5; $attempt++) {
+            try {
+              if (Test-Path $archive) { Remove-Item $archive -Force }
+              Invoke-WebRequest -Uri "https://developer.x-plane.com/wp-content/plugins/code-sample-generation/sdk_zip_files/XPSDK430.zip" -OutFile $archive -Headers @{ "User-Agent" = "FFAtmo-GitHub-Actions" }
+              if ((Get-Item $archive).Length -lt 1000000) { throw "SDK archive is unexpectedly small" }
+              break
+            } catch {
+              if ($attempt -eq 5) { throw }
+              Start-Sleep -Seconds (8 * $attempt)
+            }
+          }
+          Expand-Archive -LiteralPath $archive -DestinationPath $destination -Force
+          $header = Get-ChildItem $destination -Recurse -Filter "XPLMPlugin.h" | Where-Object { $_.FullName.Replace('\', '/') -like '*/CHeaders/XPLM/XPLMPlugin.h' } | Select-Object -First 1
+          if (-not $header) { throw "XPLMPlugin.h was not found" }
+          $root = Split-Path (Split-Path (Split-Path $header.FullName -Parent) -Parent) -Parent
+          "path=$root" >> $env:GITHUB_OUTPUT
+
+      - name: Compile deterministic engine tests
+        shell: pwsh
+        run: |
+          cmake -S . -B build-v69-core -A x64 -DXPLANE_SDK="${{ steps.sdk.outputs.path }}" -DFFATMO_BUILD_PLUGIN=OFF -DFFATMO_BUILD_COMPANION=OFF -DFFATMO_BUILD_IMGUI_PANEL=OFF -DFFATMO_BUILD_GEOMETRY_DEBUG=OFF -DFFATMO_BUILD_RECORDER_DEBUG=OFF -DFFATMO_BUILD_CONTRAIL_DEBUG=ON -DFFATMO_BUILD_REPLAY_RUNNER=OFF -DFFATMO_BUILD_TESTS=ON -DFFATMO_GIT_REVISION="${{ github.sha }}"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cmake --build build-v69-core --config Release --target ffatmo_core_tests ffatmo_contrail_tests ffatmo_live_contrail_debug_tests
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ctest --test-dir build-v69-core -C Release --output-on-failure
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

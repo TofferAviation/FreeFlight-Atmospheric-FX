@@ -32,12 +32,8 @@ def rx(text: str, pattern: str, replacement: str, label: str) -> str:
 # ---------------------------------------------------------------------------
 r = RENDERER.read_text(encoding="utf-8")
 
-r = once(
-    r,
-    "        48, 164, 164, 164, 164, 144, 144, 32",
-    "        56, 164, 164, 164, 164, 148, 156, 8",
-    "v6.6 instance allocation",
-)
+r = once(r, "        48, 164, 164, 164, 164, 144, 144, 32",
+         "        56, 164, 164, 164, 164, 148, 156, 8", "v6.6 instance allocation")
 
 r = once(
     r,
@@ -47,7 +43,6 @@ r = once(
                     0.16 * static_cast<double>(smoothstep(1.5f, 20.0f, sample.ageSeconds));''',
     "primary packing restraint",
 )
-
 r = once(
     r,
     '''                    const double fillPackingRadius = 0.12 +
@@ -89,7 +84,6 @@ stable_append = '''    static void appendStableHash(const std::vector<CloudNode>
     }
 
 '''
-
 r = rx(
     r,
     r'''    static void appendEven\(const std::vector<CloudNode>& source,.*?\n    \}\n\n(?=    static void selectAssetCandidates)''',
@@ -107,9 +101,7 @@ r = once(
     "stable layer budget",
 )
 
-# v6.5 companions were too numerous and use the same full-size opaque geometry
-# as the primary field. Keep roll-up, but sample only one quarter of candidates
-# and render the companion from the next-smaller age morphology.
+# v6.5 companions were too numerous and used full-size opaque morphology.
 r = once(
     r,
     '''            if (sample.ageSeconds >= 3.0f && sample.ageSeconds <= 30.0f &&
@@ -122,10 +114,8 @@ r = once(r, "                swirl.opacityStrength = sample.opacityStrength * 0.
          "                swirl.opacityStrength = sample.opacityStrength * 0.40f;", "swirl density restraint")
 r = once(
     r,
-    '''                swirl.assetIndex = assetForCloud(
-                    swirl.ageSeconds, swirl.opacityStrength, swirl.cloudId);''',
-    '''                const std::size_t fullSizeAsset = assetForCloud(
-                    swirl.ageSeconds, swirl.opacityStrength, swirl.cloudId);
+    "                swirl.assetIndex = assetForCloud(swirl.ageSeconds, swirl.opacityStrength, swirl.cloudId);",
+    '''                const std::size_t fullSizeAsset = assetForCloud(swirl.ageSeconds, swirl.opacityStrength, swirl.cloudId);
                 const std::size_t fullSizeClass = fullSizeAsset / 2u;
                 const std::size_t smallerClass = fullSizeClass > 0u ? fullSizeClass - 1u : 0u;
                 swirl.assetIndex = smallerClass * 2u + (fullSizeAsset & 1u);''',
@@ -141,14 +131,14 @@ r = once(
 )
 r = once(
     r,
-    '''                    static_cast<double>(sample.widthM) * 0.46, 0.32, 2.65);''',
-    '''                    static_cast<double>(sample.widthM) * 0.34, 0.18, 1.75);''',
+    "                const double widthBound = std::clamp(static_cast<double>(sample.widthM) * 0.46, 0.32, 2.65);",
+    "                const double widthBound = std::clamp(static_cast<double>(sample.widthM) * 0.34, 0.18, 1.75);",
     "vortex radius bound",
 )
 r = once(
     r,
-    '''                    static_cast<double>(sample.ageSeconds - 3.0f) * 0.31 + phaseSeed;''',
-    '''                    static_cast<double>(sample.ageSeconds - 4.5f) * 0.24 + phaseSeed;''',
+    "                const double phase = direction * static_cast<double>(sample.ageSeconds - 3.0f) * 0.31 + phaseSeed;",
+    "                const double phase = direction * static_cast<double>(sample.ageSeconds - 4.5f) * 0.24 + phaseSeed;",
     "vortex phase rate",
 )
 
@@ -156,7 +146,6 @@ r = r.replace("Renderer Foundation v6.5", "Renderer Foundation v6.6")
 r = r.replace("Renderer v6.5", "Renderer v6.6")
 r = r.replace("ice-white cutout vortex 3-D field", "smooth stable micro-cutout vortex 3-D field")
 r = r.replace("alpha-tested ice-white 3-D morphology assets", "smooth micro-cutout ice-white 3-D morphology assets")
-
 for token in (
     "appendStableHash", "budget * 0.56", "% 4ULL) == 0ULL", "smallerClass",
     "sample.widthM) * 0.34, 0.18, 1.75", "56, 164, 164, 164, 164, 148, 156, 8",
@@ -166,10 +155,7 @@ for token in (
 RENDERER.write_text(r, encoding="utf-8", newline="\n")
 
 
-# ---------------------------------------------------------------------------
-# Runtime/report identity and diagnostics.
-# Keep the successful v6.5 streamline-locked 8-14 m handoff unchanged.
-# ---------------------------------------------------------------------------
+# Runtime/report identity. Keep the successful v6.5 streamline-locked handoff.
 p = PLUGIN.read_text(encoding="utf-8")
 p = p.replace("FFAtmo World Contrail Visual Debug Report v6.5 ICE_WHITE_VORTEX_FIELD",
               "FFAtmo World Contrail Visual Debug Report v6.6 SMOOTH_STABLE_VORTEX_FIELD")
@@ -184,13 +170,12 @@ p = p.replace(
 
 p = once(
     p,
-    '''               << "render_material_mode=ALPHA_TEST_CUTOUT" << '\n' ''',
-    '''               << "render_material_mode=ALPHA_TEST_CUTOUT" << '\n'
-               << "renderer_selection_mode=STABLE_HASH" << '\n'
-               << "vortex_sampling_mode=SPARSE_SUBSCALE" << '\n' ''',
+    "               << \"render_material_mode=ALPHA_TEST_CUTOUT\" << '\\n'",
+    "               << \"render_material_mode=ALPHA_TEST_CUTOUT\" << '\\n'\n"
+    "               << \"renderer_selection_mode=STABLE_HASH\" << '\\n'\n"
+    "               << \"vortex_sampling_mode=SPARSE_SUBSCALE\" << '\\n'",
     "v6.6 report modes",
 )
-
 p = once(
     p,
     '''               << "world_renderer_swirl_candidate_count="

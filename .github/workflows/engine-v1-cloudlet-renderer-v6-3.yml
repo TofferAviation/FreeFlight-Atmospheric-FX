@@ -8,7 +8,7 @@ on:
     paths:
       - "src/ContrailCloudletRendererV62.h"
       - "tools/generate_v6_3_morphology_assets.py"
-      - "tools/patch_v6_3_morphology_onset.py"
+      - "tools/patch_v6_3_morphology_onset_v2.py"
       - ".github/workflows/engine-v1-cloudlet-renderer-v6-3.yml"
   pull_request:
     branches:
@@ -16,7 +16,7 @@ on:
     paths:
       - "src/ContrailCloudletRendererV62.h"
       - "tools/generate_v6_3_morphology_assets.py"
-      - "tools/patch_v6_3_morphology_onset.py"
+      - "tools/patch_v6_3_morphology_onset_v2.py"
       - ".github/workflows/engine-v1-cloudlet-renderer-v6-3.yml"
 
 permissions:
@@ -46,7 +46,7 @@ jobs:
           python tools/patch_v5_6_connected_cloud_swirl.py
           python tools/patch_v6_1_cloudlet_renderer.py
           python tools/patch_v6_2_filled_cloud_renderer.py
-          python tools/patch_v6_3_morphology_onset.py
+          python tools/patch_v6_3_morphology_onset_v2.py
 
           $plugin = Get-Content src/ContrailDebugPlugin.cpp -Raw
           $renderer = Get-Content src/ContrailCloudletRendererV62.h -Raw
@@ -69,7 +69,7 @@ jobs:
           python tools/generate_v6_3_morphology_assets.py generated-v63-assets
           @'
           from pathlib import Path
-          import re, struct, zlib
+          import struct, zlib
 
           root = Path("generated-v63-assets")
           ages = ["near", "young", "mature", "old"]
